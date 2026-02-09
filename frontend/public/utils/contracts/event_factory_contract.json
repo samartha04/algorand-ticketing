@@ -1,0 +1,22 @@
+{
+    "name": "EventFactoryRepository",
+    "methods": [
+        {
+            "name": "register_event",
+            "args": [
+                {
+                    "type": "uint64",
+                    "name": "app_id"
+                },
+                {
+                    "type": "string",
+                    "name": "name"
+                }
+            ],
+            "returns": {
+                "type": "void"
+            }
+        }
+    ],
+    "networks": {}
+}

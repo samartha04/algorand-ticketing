@@ -1,0 +1,307 @@
+#pragma version 8
+txn NumAppArgs
+int 0
+==
+bnz main_l10
+txna ApplicationArgs 0
+method "create_event(uint64,uint64)void"
+==
+bnz main_l9
+txna ApplicationArgs 0
+method "buy_ticket(pay)void"
+==
+bnz main_l8
+txna ApplicationArgs 0
+method "claim_ticket(uint64)void"
+==
+bnz main_l7
+txna ApplicationArgs 0
+method "check_in(uint64)void"
+==
+bnz main_l6
+err
+main_l6:
+txn OnCompletion
+int NoOp
+==
+txn ApplicationID
+int 0
+!=
+&&
+assert
+callsub checkincaster_7
+int 1
+return
+main_l7:
+txn OnCompletion
+int NoOp
+==
+txn ApplicationID
+int 0
+!=
+&&
+assert
+callsub claimticketcaster_6
+int 1
+return
+main_l8:
+txn OnCompletion
+int NoOp
+==
+txn ApplicationID
+int 0
+!=
+&&
+assert
+callsub buyticketcaster_5
+int 1
+return
+main_l9:
+txn OnCompletion
+int NoOp
+==
+txn ApplicationID
+int 0
+!=
+&&
+assert
+callsub createeventcaster_4
+int 1
+return
+main_l10:
+txn OnCompletion
+int NoOp
+==
+bnz main_l20
+txn OnCompletion
+int OptIn
+==
+bnz main_l19
+txn OnCompletion
+int CloseOut
+==
+bnz main_l18
+txn OnCompletion
+int UpdateApplication
+==
+bnz main_l17
+txn OnCompletion
+int DeleteApplication
+==
+bnz main_l16
+err
+main_l16:
+txn Sender
+global CreatorAddress
+==
+return
+main_l17:
+txn Sender
+global CreatorAddress
+==
+return
+main_l18:
+int 1
+return
+main_l19:
+int 1
+return
+main_l20:
+txn ApplicationID
+int 0
+==
+assert
+int 1
+return
+
+// create_event
+createevent_0:
+proto 2 0
+byte "Price"
+frame_dig -2
+app_global_put
+byte "Supply"
+frame_dig -1
+app_global_put
+byte "Sold"
+int 0
+app_global_put
+byte "Organizer"
+txn Sender
+app_global_put
+retsub
+
+// buy_ticket
+buyticket_1:
+proto 1 0
+frame_dig -1
+gtxns Receiver
+global CurrentApplicationAddress
+==
+assert
+frame_dig -1
+gtxns Amount
+byte "Price"
+app_global_get
+==
+assert
+byte "Sold"
+app_global_get
+byte "Supply"
+app_global_get
+<
+assert
+byte "Sold"
+byte "Sold"
+app_global_get
+int 1
++
+app_global_put
+itxn_begin
+int acfg
+itxn_field TypeEnum
+int 1
+itxn_field ConfigAssetTotal
+int 0
+itxn_field ConfigAssetDecimals
+int 0
+itxn_field ConfigAssetDefaultFrozen
+byte "TICKET"
+itxn_field ConfigAssetName
+byte "TKT"
+itxn_field ConfigAssetUnitName
+global CurrentApplicationAddress
+itxn_field ConfigAssetManager
+itxn_submit
+itxn CreatedAssetID
+itob
+txn Sender
+byte "\x00"
+concat
+box_put
+retsub
+
+// claim_ticket
+claimticket_2:
+proto 1 0
+frame_dig -1
+itob
+box_get
+store 1
+store 0
+load 1
+assert
+load 0
+extract 0 32
+store 2
+load 0
+extract 32 1
+store 3
+txn Sender
+load 2
+==
+assert
+load 3
+byte "\x00"
+==
+assert
+itxn_begin
+int axfer
+itxn_field TypeEnum
+frame_dig -1
+itxn_field XferAsset
+txn Sender
+itxn_field AssetReceiver
+int 1
+itxn_field AssetAmount
+itxn_submit
+frame_dig -1
+itob
+int 32
+byte "\x01"
+box_replace
+retsub
+
+// check_in
+checkin_3:
+proto 1 0
+frame_dig -1
+itob
+box_get
+store 5
+store 4
+load 5
+assert
+txn Sender
+byte "Organizer"
+app_global_get
+==
+assert
+load 4
+extract 32 1
+store 6
+load 6
+byte "\x01"
+==
+assert
+frame_dig -1
+itob
+int 32
+byte "\x02"
+box_replace
+retsub
+
+// create_event_caster
+createeventcaster_4:
+proto 0 0
+int 0
+dup
+txna ApplicationArgs 1
+btoi
+frame_bury 0
+txna ApplicationArgs 2
+btoi
+frame_bury 1
+frame_dig 0
+frame_dig 1
+callsub createevent_0
+retsub
+
+// buy_ticket_caster
+buyticketcaster_5:
+proto 0 0
+int 0
+txn GroupIndex
+int 1
+-
+frame_bury 0
+frame_dig 0
+gtxns TypeEnum
+int pay
+==
+assert
+frame_dig 0
+callsub buyticket_1
+retsub
+
+// claim_ticket_caster
+claimticketcaster_6:
+proto 0 0
+int 0
+txna ApplicationArgs 1
+btoi
+frame_bury 0
+frame_dig 0
+callsub claimticket_2
+retsub
+
+// check_in_caster
+checkincaster_7:
+proto 0 0
+int 0
+txna ApplicationArgs 1
+btoi
+frame_bury 0
+frame_dig 0
+callsub checkin_3
+retsub
