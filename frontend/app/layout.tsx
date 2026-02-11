@@ -2,15 +2,16 @@ import type { Metadata } from 'next'
 import { Inter } from 'next/font/google'
 import './globals.css'
 
-const inter = Inter({ subsets: ['latin'] })
+const inter = Inter({ subsets: ['latin'], variable: '--font-inter' })
 
 export const metadata: Metadata = {
-    title: 'Algorand Ticket Platform',
-    description: 'Decentralized Event Ticketing',
+    title: 'AlgoEvents – NFT Event Ticketing on Algorand',
+    description: 'Discover, create, and manage events with NFT tickets on the Algorand blockchain. Secure, transparent, and fair.',
 }
 
 import WalletProviderComponent from '@/components/WalletProvider'
-import ConnectWallet from '@/components/ConnectWallet'
+import Header from '@/components/Header'
+import Footer from '@/components/Footer'
 
 export default function RootLayout({
     children,
@@ -19,23 +20,13 @@ export default function RootLayout({
 }) {
     return (
         <html lang="en">
-            <body className={inter.className}>
+            <body className={`${inter.className} min-h-screen flex flex-col bg-background text-foreground antialiased`}>
                 <WalletProviderComponent>
-                    <header className="flex justify-between items-center p-4 border-b bg-white relative z-50">
-                        <div className="flex gap-6 items-center">
-                            <h1 className="text-xl font-bold">AlgoEvents</h1>
-                            <nav className="flex gap-4">
-                                <a href="/" className="hover:underline">Home</a>
-                                <a href="/create-event" className="hover:underline">Create Event</a>
-                                <a href="/my-tickets" className="hover:underline">My Tickets</a>
-                                <a href="/verify" className="hover:underline">Verify (Admin)</a>
-                            </nav>
-                        </div>
-                        <ConnectWallet />
-                    </header>
-                    <main className="p-4">
+                    <Header />
+                    <main className="flex-1">
                         {children}
                     </main>
+                    <Footer />
                 </WalletProviderComponent>
             </body>
         </html>

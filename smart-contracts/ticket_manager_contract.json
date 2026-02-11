@@ -52,6 +52,18 @@
             "returns": {
                 "type": "void"
             }
+        },
+        {
+            "name": "withdraw_funds",
+            "args": [
+                {
+                    "type": "uint64",
+                    "name": "amount"
+                }
+            ],
+            "returns": {
+                "type": "void"
+            }
         }
     ],
     "networks": {}

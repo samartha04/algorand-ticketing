@@ -3,16 +3,36 @@
 import { useWallet } from '@txnlab/use-wallet';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import algosdk from 'algosdk';
 import { QRCodeCanvas } from 'qrcode.react';
+import { executeATC, dummySigner } from '@/utils/signer';
 
 interface Ticket {
     assetId: number;
     eventName: string;
     appId: number;
     status: 'pending' | 'claimed' | 'used';
+    index: number;
 }
+
+function TicketSkeleton() {
+    return (
+        <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden animate-pulse">
+            <div className="h-2 bg-gray-100 rounded-full" />
+            <div className="p-6 space-y-4">
+                <div className="h-5 bg-gray-100 rounded-lg w-3/4" />
+                <div className="h-4 bg-gray-50 rounded-lg w-1/2" />
+                <div className="h-10 bg-gray-100 rounded-xl w-full mt-4" />
+            </div>
+        </div>
+    );
+}
+
+const statusConfig = {
+    pending: { bg: 'bg-amber-50', text: 'text-amber-600', border: 'border-amber-200', dot: 'bg-amber-500', label: 'Pending Claim', btnClass: 'bg-amber-500 hover:bg-amber-600 text-white shadow-md shadow-amber-500/20' },
+    claimed: { bg: 'bg-green-50', text: 'text-green-600', border: 'border-green-200', dot: 'bg-green-500', label: 'Ready to Use', btnClass: 'gradient-purple text-white shadow-brand' },
+    used: { bg: 'bg-gray-50', text: 'text-gray-500', border: 'border-gray-200', dot: 'bg-gray-400', label: 'Used', btnClass: 'bg-gray-100 text-gray-400' },
+};
 
 export default function MyTicketsPage() {
     const { activeAccount, signTransactions } = useWallet();
@@ -21,29 +41,27 @@ export default function MyTicketsPage() {
     const [isLoading, setIsLoading] = useState(false);
     const [status, setStatus] = useState('');
     const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
+    const [claimingId, setClaimingId] = useState<number | null>(null);
 
     const indexerClient = new algosdk.Indexer('', 'https://testnet-idx.algonode.cloud', 443);
     const algodClient = new algosdk.Algodv2('', 'https://testnet-api.algonode.cloud', 443);
 
     const fetchAll = async () => {
-        if (!activeAccount || factoryAppId === 0) {
-            setStatus('Please connect wallet and enter Factory ID');
-            return;
-        }
-        setIsLoading(true);
-        setStatus('Fetching events...');
-
+        if (!activeAccount || factoryAppId === 0) { setStatus('Connect wallet and enter Factory ID'); return; }
+        setIsLoading(true); setStatus(''); setTickets([]);
         try {
             const appInfo = await algodClient.getApplicationByID(factoryAppId).do();
             const globalState = appInfo.params["global-state"];
-            const countKey = btoa("EventCount");
+            const countKey = btoa("event_count");
             const countState = globalState?.find((s: any) => s.key === countKey);
             const eventCount = countState ? countState.value.uint : 0;
-
             const eventMap = new Map<string, { appId: number, name: string }>();
-
+            const eventsPrefix = new TextEncoder().encode("events");
             for (let i = 0; i < eventCount; i++) {
-                const boxKey = algosdk.encodeUint64(i);
+                const rawKey = algosdk.encodeUint64(i);
+                const boxKey = new Uint8Array(eventsPrefix.length + rawKey.length);
+                boxKey.set(eventsPrefix, 0);
+                boxKey.set(rawKey, eventsPrefix.length);
                 const box = await algodClient.getApplicationBoxByName(factoryAppId, boxKey).do();
                 const id = algosdk.decodeUint64(box.value.slice(0, 8), 'safe');
                 const nameLen = (box.value[8] << 8) | box.value[9];
@@ -51,183 +69,170 @@ export default function MyTicketsPage() {
                 const addr = algosdk.getApplicationAddress(id);
                 eventMap.set(addr, { appId: Number(id), name });
             }
-
             const myTickets: Ticket[] = [];
-
-            // Pending
-            setStatus('Checking pending tickets...');
             for (const [appAddr, info] of Array.from(eventMap.entries())) {
-                const created = await indexerClient.lookupAccountCreatedAssets(appAddr).do();
-                for (const asset of created['assets'] || []) {
-                    try {
-                        const boxKey = algosdk.encodeUint64(asset.index);
-                        const box = await algodClient.getApplicationBoxByName(info.appId, boxKey).do();
-                        const owner = algosdk.encodeAddress(box.value.slice(0, 32));
-                        const status = box.value[32];
-
-                        if (owner === activeAccount.address && status === 0) {
-                            myTickets.push({
-                                assetId: asset.index,
-                                eventName: info.name,
-                                appId: info.appId,
-                                status: 'pending'
-                            });
+                try {
+                    const appInfo = await algodClient.getApplicationByID(info.appId).do();
+                    const globalState = appInfo.params["global-state"];
+                    const soldKey = btoa("sold");
+                    const soldState = globalState?.find((s: any) => s.key === soldKey);
+                    const sold = soldState ? soldState.value.uint : 0;
+                    const ticketsPrefix = new TextEncoder().encode("tickets");
+                    const promises = [];
+                    for (let i = 0; i < sold; i++) {
+                        const rawKey = algosdk.encodeUint64(i);
+                        const boxKey = new Uint8Array(ticketsPrefix.length + rawKey.length);
+                        boxKey.set(ticketsPrefix, 0);
+                        boxKey.set(rawKey, ticketsPrefix.length);
+                        promises.push(algodClient.getApplicationBoxByName(info.appId, boxKey).do().then(box => ({ i, box })).catch(() => null));
+                    }
+                    const results = await Promise.all(promises);
+                    for (const res of results) {
+                        if (!res) continue;
+                        const { i, box } = res;
+                        const assetId = algosdk.decodeUint64(box.value.slice(0, 8), 'safe');
+                        const owner = algosdk.encodeAddress(box.value.slice(8, 40));
+                        const statusByte = box.value[40];
+                        if (owner === activeAccount.address) {
+                            const status = statusByte === 0 ? 'pending' : statusByte === 1 ? 'claimed' : 'used';
+                            myTickets.push({ index: i, assetId: Number(assetId), eventName: info.name, appId: info.appId, status });
                         }
-                    } catch (e) {
-                        // ignore
                     }
-                }
+                } catch (e) { }
             }
-
-            // Claimed
-            setStatus('Checking claimed tickets...');
-            const userAssets = await indexerClient.lookupAccountAssets(activeAccount.address).do();
-            for (const asset of userAssets['assets'] || []) {
-                if (asset.amount > 0) {
-                    const aInfo = await indexerClient.lookupAssetByID(asset['asset-id']).do();
-                    const creator = aInfo['asset']['params']['creator'];
-
-                    if (eventMap.has(creator)) {
-                        const info = eventMap.get(creator)!;
-                        myTickets.push({
-                            assetId: asset['asset-id'],
-                            eventName: info.name,
-                            appId: info.appId,
-                            status: 'claimed'
-                        });
-                    }
-                }
-            }
-
             setTickets(myTickets);
-            setStatus(`Found ${myTickets.length} tickets`);
-
-        } catch (e: any) {
-            console.error(e);
-            setStatus(`Error: ${e.message}`);
-        } finally {
-            setIsLoading(false);
-        }
+            if (myTickets.length === 0) setStatus('No tickets found');
+        } catch (e: any) { console.error(e); setStatus(`Error: ${e.message}`); }
+        finally { setIsLoading(false); }
     };
 
     const claimTicket = async (ticket: Ticket) => {
+        if (!activeAccount) return;
+        setClaimingId(ticket.assetId);
         try {
-            setStatus(`Claiming ticket ${ticket.assetId}...`);
             const contractJson = await fetch('/utils/contracts/ticket_manager_contract.json').then(r => r.json());
             const contract = new algosdk.ABIContract(contractJson);
             const method = contract.getMethodByName('claim_ticket');
-
             const atc = new algosdk.AtomicTransactionComposer();
-
-            const optInTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({
-                from: activeAccount!.address,
-                to: activeAccount!.address,
-                assetIndex: ticket.assetId,
-                amount: 0,
-                suggestedParams: await algodClient.getTransactionParams().do()
-            });
-
-            atc.addTransaction({ txn: optInTxn, signer: async (txns) => signTransactions(txns.map(t => t.toByte())) });
-
-            const sp = await algodClient.getTransactionParams().do();
-            sp.fee = 2000;
-            sp.flatFee = true;
-
-            atc.addMethodCall({
-                appID: ticket.appId,
-                method: method,
-                methodArgs: [ticket.assetId],
-                sender: activeAccount!.address,
-                signer: async (txns) => signTransactions(txns.map(t => t.toByte())),
-                suggestedParams: sp,
-            });
-
-            await atc.execute(algodClient, 4);
-            setStatus('Ticket Claimed Successfully!');
+            const optInTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({ from: activeAccount.address, to: activeAccount.address, assetIndex: ticket.assetId, amount: 0, suggestedParams: await algodClient.getTransactionParams().do() });
+            atc.addTransaction({ txn: optInTxn, signer: dummySigner });
+            const sp = await algodClient.getTransactionParams().do(); sp.fee = 2000; sp.flatFee = true;
+            const ticketsPrefix = new TextEncoder().encode("tickets");
+            const rawKey = algosdk.encodeUint64(ticket.index);
+            const claimBoxKey = new Uint8Array(ticketsPrefix.length + rawKey.length);
+            claimBoxKey.set(ticketsPrefix, 0);
+            claimBoxKey.set(rawKey, ticketsPrefix.length);
+            atc.addMethodCall({ appID: ticket.appId, method, methodArgs: [ticket.index], boxes: [{ appIndex: 0, name: claimBoxKey }], sender: activeAccount.address, signer: dummySigner, suggestedParams: sp });
+            await executeATC(atc, algodClient, signTransactions);
+            setStatus('🎉 Ticket claimed!');
             fetchAll();
-
-        } catch (e: any) {
-            console.error(e);
-            setStatus(`Claim Error: ${e.message}`);
-        }
+        } catch (e: any) { console.error(e); setStatus(`Claim failed: ${e.message}`); }
+        finally { setClaimingId(null); }
     };
 
     return (
-        <div className="container mx-auto py-10 relative">
-            <h1 className="text-3xl font-bold mb-6">My Tickets</h1>
+        <div className="min-h-screen bg-white">
+            {/* Hero */}
+            <section className="relative py-16 overflow-hidden">
+                <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[600px] h-[600px] rounded-full opacity-[0.07] blur-3xl" style={{ background: 'radial-gradient(circle, #10b981, transparent 70%)' }} />
+                <div className="container px-4 md:px-6 relative z-10 text-center">
+                    <p className="text-sm font-bold text-green-600 uppercase tracking-wider mb-3">Wallet</p>
+                    <h1 className="text-4xl md:text-5xl font-extrabold text-gray-900 tracking-tight mb-4">
+                        My Tickets
+                    </h1>
+                    <p className="text-gray-400 max-w-lg mx-auto">Manage your NFT tickets. Claim pending tickets and show QR codes for entry.</p>
+                </div>
+            </section>
 
-            <Card className="mb-6">
-                <CardContent className="pt-6">
-                    <div className="flex gap-4 items-center">
-                        <label className="text-sm font-medium whitespace-nowrap">Factory App ID:</label>
-                        <input
-                            className="p-2 border rounded w-32"
-                            type="number"
-                            value={factoryAppId}
-                            onChange={(e) => setFactoryAppId(parseInt(e.target.value))}
-                        />
-                        <Button onClick={fetchAll} disabled={isLoading || !activeAccount}>Refresh Tickets</Button>
+            {/* Search */}
+            <section className="pb-8">
+                <div className="container px-4 md:px-6">
+                    <div className="flex flex-col sm:flex-row gap-3 items-center justify-center max-w-md mx-auto">
+                        <input className="w-full px-5 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500/30 focus:border-green-500 transition-all text-sm" type="number" placeholder="Factory App ID" value={factoryAppId || ''} onChange={(e) => setFactoryAppId(parseInt(e.target.value) || 0)} />
+                        <Button onClick={fetchAll} disabled={isLoading || !activeAccount} className="bg-green-600 hover:bg-green-700 text-white shadow-md shadow-green-600/20 whitespace-nowrap px-8">
+                            {isLoading ? (
+                                <span className="flex items-center gap-2">
+                                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                                    Loading...
+                                </span>
+                            ) : 'Load Tickets'}
+                        </Button>
                     </div>
-                    {!activeAccount && <p className="text-red-500 text-sm mt-2">Please connect wallet</p>}
-                    {status && <p className="text-muted-foreground text-sm mt-2 font-mono">{status}</p>}
-                </CardContent>
-            </Card>
+                    {!activeAccount && <p className="text-center mt-4 text-sm text-amber-500 font-medium">Connect your wallet first</p>}
+                    {status && <p className={`text-center mt-4 text-sm font-medium ${status.includes('🎉') ? 'text-green-600' : status.includes('Error') || status.includes('failed') ? 'text-[#FF5B5B]' : 'text-gray-400'}`}>{status}</p>}
+                </div>
+            </section>
 
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {tickets.map((ticket) => (
-                    <Card key={ticket.assetId}>
-                        <CardHeader>
-                            <CardTitle>{ticket.eventName}</CardTitle>
-                            <CardDescription>Asset ID: {ticket.assetId}</CardDescription>
-                        </CardHeader>
-                        <CardFooter>
-                            {ticket.status === 'pending' ? (
-                                <Button className="w-full" onClick={() => claimTicket(ticket)}>Claim Ticket</Button>
-                            ) : (
-                                <Button variant="secondary" className="w-full" onClick={() => setSelectedTicket(ticket)}>View QR (Ready)</Button>
-                            )}
-                        </CardFooter>
-                    </Card>
-                ))}
-                {tickets.length === 0 && !isLoading && (
-                    <div className="text-center col-span-full py-10 text-gray-500">
-                        No tickets found.
-                    </div>
-                )}
-            </div>
+            {/* Tickets Grid */}
+            <section className="py-8 pb-24">
+                <div className="container px-4 md:px-6">
+                    {isLoading ? (
+                        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">{[1, 2, 3].map(i => <TicketSkeleton key={i} />)}</div>
+                    ) : tickets.length > 0 ? (
+                        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+                            {tickets.map((ticket) => {
+                                const cfg = statusConfig[ticket.status];
+                                return (
+                                    <div key={ticket.assetId} className="group bg-white rounded-2xl border border-gray-100 overflow-hidden hover:shadow-xl hover:shadow-gray-200/50 transition-all duration-300 hover:-translate-y-1">
+                                        {/* Status bar */}
+                                        <div className={`h-1.5 ${ticket.status === 'pending' ? 'bg-amber-400' : ticket.status === 'claimed' ? 'bg-green-500' : 'bg-gray-300'}`} />
+                                        <div className="p-6">
+                                            <div className="flex justify-between items-start mb-4">
+                                                <div>
+                                                    <h3 className="text-lg font-bold text-gray-900 group-hover:text-[#685AFF] transition-colors">{ticket.eventName}</h3>
+                                                    <p className="text-xs text-gray-400 font-mono">Ticket #{ticket.index} (Asset {ticket.assetId})</p>
+                                                </div>
+                                                <span className={`px-3 py-1 rounded-full text-xs font-bold ${cfg.bg} ${cfg.text} ${cfg.border} border flex items-center gap-1.5`}>
+                                                    <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
+                                                    {cfg.label}
+                                                </span>
+                                            </div>
 
+                                            {ticket.status === 'pending' ? (
+                                                <Button className={`w-full ${cfg.btnClass}`} onClick={() => claimTicket(ticket)} disabled={claimingId === ticket.assetId}>
+                                                    {claimingId === ticket.assetId ? (
+                                                        <span className="flex items-center gap-2"><svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>Claiming...</span>
+                                                    ) : 'Claim Ticket →'}
+                                                </Button>
+                                            ) : ticket.status === 'claimed' ? (
+                                                <Button className={`w-full ${cfg.btnClass}`} onClick={() => setSelectedTicket(ticket)}>
+                                                    Show QR Code
+                                                </Button>
+                                            ) : null}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    ) : (
+                        <div className="text-center py-20">
+                            <div className="w-20 h-20 mx-auto mb-6 rounded-2xl bg-green-50 flex items-center justify-center">
+                                <svg className="w-10 h-10 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z" /></svg>
+                            </div>
+                            <h3 className="text-xl font-bold text-gray-800 mb-2">No Tickets Yet</h3>
+                            <p className="text-gray-400 max-w-sm mx-auto">Purchase tickets from the Marketplace and they'll show up here</p>
+                        </div>
+                    )}
+                </div>
+            </section>
+
+            {/* QR Modal */}
             {selectedTicket && (
-                <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 transition-opacity" onClick={() => setSelectedTicket(null)}>
-                    <div className="bg-white p-8 rounded-lg max-w-sm w-full space-y-6 text-center shadow-2xl relative" onClick={e => e.stopPropagation()}>
-                        <button
-                            onClick={() => setSelectedTicket(null)}
-                            className="absolute top-2 right-2 text-gray-500 hover:text-black text-xl font-bold p-2"
-                        >
-                            ×
-                        </button>
-                        <div>
-                            <h3 className="text-2xl font-bold mb-1">{selectedTicket.eventName}</h3>
-                            <p className="text-sm text-gray-500">Show this at the entrance</p>
+                <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50" onClick={() => setSelectedTicket(null)}>
+                    <div className="bg-white p-8 rounded-3xl max-w-sm w-full text-center shadow-2xl animate-scale-in relative" onClick={e => e.stopPropagation()}>
+                        <button onClick={() => setSelectedTicket(null)} className="absolute top-4 right-4 w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 text-gray-400 hover:text-gray-700 transition-all">✕</button>
+                        <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-green-50 text-green-600 text-xs font-bold rounded-full mb-4">
+                            <span className="w-1.5 h-1.5 bg-green-500 rounded-full" /> Entry Pass
                         </div>
-
-                        <div className="flex justify-center py-4">
-                            <QRCodeCanvas
-                                value={JSON.stringify({
-                                    appId: selectedTicket.appId,
-                                    assetId: selectedTicket.assetId
-                                })}
-                                size={220}
-                                level={"H"}
-                                includeMargin={true}
-                            />
+                        <h3 className="text-2xl font-extrabold text-gray-900 mb-6">{selectedTicket.eventName}</h3>
+                        <div className="p-5 bg-gray-50 rounded-2xl inline-block mb-4">
+                            <QRCodeCanvas value={JSON.stringify({ appId: selectedTicket.appId, assetId: selectedTicket.assetId })} size={200} level={"H"} includeMargin={true} />
                         </div>
-
-                        <div className="text-xs text-gray-400 font-mono break-all py-2 border-t">
-                            ID: {selectedTicket.assetId}
-                        </div>
+                        <p className="text-xs text-gray-400 font-mono mb-2">Ticket #{selectedTicket.assetId}</p>
+                        <p className="text-xs text-gray-400 pt-3 border-t border-gray-100">Present this QR code at the entrance for verification</p>
                     </div>
                 </div>
             )}
         </div>
-    )
+    );
 }

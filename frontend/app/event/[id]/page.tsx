@@ -5,10 +5,11 @@ import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import algosdk from 'algosdk';
+import { executeATC, dummySigner } from '@/utils/signer';
 
 export default function EventDetailsPage({ params }: { params: { id: string } }) {
     const appId = parseInt(params.id);
-    const { activeAccount, signTransactions, sendTransactions } = useWallet();
+    const { activeAccount, signTransactions } = useWallet();
 
     // Event State
     const [eventData, setEventData] = useState<any>(null);
@@ -31,8 +32,7 @@ export default function EventDetailsPage({ params }: { params: { id: string } })
             const globalState = appInfo.params['global-state'];
 
             // Parse State
-            // Price, Supply, Sold are keys 'Price', 'Supply', 'Sold' (base64 encoded)
-            // Organizer is 'Organizer'
+            // AlgoKit uses lowercase keys: 'price', 'supply', 'sold', 'organizer'
             const parsedState: any = {};
             globalState.forEach((item: any) => {
                 const key = Buffer.from(item.key, 'base64').toString();
@@ -41,10 +41,10 @@ export default function EventDetailsPage({ params }: { params: { id: string } })
             });
 
             setEventData({
-                price: parsedState['Price'], // MicroAlgos
-                supply: parsedState['Supply'],
-                sold: parsedState['Sold'],
-                organizer: parsedState['Organizer'] ? algosdk.encodeAddress(Buffer.from(parsedState['Organizer'], 'base64')) : 'Unknown',
+                price: parsedState['price'], // MicroAlgos
+                supply: parsedState['supply'],
+                sold: parsedState['sold'],
+                organizer: parsedState['organizer'] ? algosdk.encodeAddress(Buffer.from(parsedState['organizer'], 'base64')) : 'Unknown',
                 appId: appId
             });
         } catch (error) {
@@ -76,23 +76,30 @@ export default function EventDetailsPage({ params }: { params: { id: string } })
             const contractJson = await fetch('/utils/contracts/ticket_manager_contract.json').then(r => r.json());
             const contract = new algosdk.ABIContract(contractJson);
 
+
+
             const atc = new algosdk.AtomicTransactionComposer();
+            const sp = { ...params, fee: 3000, flatFee: true };
+            const ticketsPrefix = new TextEncoder().encode("tickets");
+            const rawKey = algosdk.encodeUint64(eventData.sold);
+            const boxKey = new Uint8Array(ticketsPrefix.length + rawKey.length);
+            boxKey.set(ticketsPrefix, 0);
+            boxKey.set(rawKey, ticketsPrefix.length);
+
             atc.addMethodCall({
                 appID: appId,
                 method: contract.getMethodByName('buy_ticket'),
                 methodArgs: [
-                    { txn: paymentTxn, signer: algosdk.makeBasicAccountTransactionSigner({} as any) } // Signer placeholder, actual signing below
+                    { txn: paymentTxn, signer: dummySigner }
                 ],
+                boxes: [{ appIndex: 0, name: boxKey }],
                 sender: activeAccount.address,
-                signer: async (txns) => {
-                    const s = await signTransactions(txns.map(t => t.toByte()));
-                    return s;
-                },
-                suggestedParams: params
+                signer: dummySigner,
+                suggestedParams: sp
             });
 
             // Execute
-            await atc.execute(algodClient, 4);
+            await executeATC(atc, algodClient, signTransactions);
 
             setStatus('Purchase Successful! You can now claim your ticket.');
             // Ideally refresh global state

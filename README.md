@@ -1,53 +1,218 @@
-# Decentralized Event Ticketing Platform (Algorand)
+# 🎫 AlgoEvents — Decentralized Event Ticketing on Algorand
 
-A transparent, decentralized event ticketing platform built on the Algorand blockchain to eliminate scalping and provide verifiable ticket ownership.
+> **HackSeries 2 — Track 1: Future of Finance**
+>
+> A simple, user-friendly decentralized application that enables students and campus communities to create, sell, and manage event tickets using blockchain wallets, tokens, and smart contracts on Algorand.
 
-## Features
+![Algorand](https://img.shields.io/badge/Algorand-Testnet-685AFF?style=for-the-badge&logo=algorand)
+![AlgoKit](https://img.shields.io/badge/AlgoKit-PuyaPy_v5-FF5B5B?style=for-the-badge)
+![Next.js](https://img.shields.io/badge/Next.js-14-black?style=for-the-badge&logo=next.js)
 
-- **Event Creation & Management**: Create events, set ticket tiers, and define supply.
-- **Ticket Minting**: Issue tickets as Algorand Standard Assets (ASAs).
-- **Secure Purchases**: Atomic transfers for instant, trustless ticket buying.
-- **QR Entry Verification**: On-chain verification for event entry using QR codes.
-- **Secondary Market**: Controlled resale with price caps and royalties.
+---
 
-## Tech Stack
+## 🎯 Problem Statement
 
-- **Smart Contracts**: PyTeal (Python)
-- **Frontend**: Next.js (React), Tailwind CSS, Shadcn/UI
-- **Wallet Integration**: Pera Wallet, Defly
-- **Storage**: IPFS (Pinata)
+Students and campus communities rely on centralized ticketing platforms that:
+- **Charge high fees** (15–25% service charges)
+- **Lack transparency** — no way to verify ticket authenticity
+- **Enable scalping** — bots buy and resell at inflated prices
+- **Provide no control** to organizers over the secondary market
 
-## Prerequisites
+## 💡 Our Solution
 
-- [Node.js](https://nodejs.org/) (v18+)
-- [Python](https://www.python.org/) (v3.10+)
-- [Docker](https://www.docker.com/) (Recommended for Algorand Sandbox)
+**AlgoEvents** is a fully decentralized event ticketing platform built on Algorand that gives organizers and attendees full control:
 
-## Setup
+| Feature | How It Works |
+|---|---|
+| **NFT Tickets** | Each ticket is minted as a unique ASA (Algorand Standard Asset) on-chain |
+| **Transparent Pricing** | Ticket prices are set in the smart contract — no hidden fees |
+| **Anti-Scalping** | Tickets are non-transferable until claimed; organizer controls the flow |
+| **QR Verification** | Attendees show a QR code at the door; organizer verifies on-chain |
+| **Instant Payouts** | Organizers withdraw revenue directly from the contract — no middleman |
+| **Low Cost** | Algorand's ~0.001 ALGO tx fee vs. $5+ platform fees |
 
-1.  **Frontend**:
-    ```bash
-    cd frontend
-    npm install
-    npm run dev
-    ```
+---
 
-2.  **Smart Contracts**:
-    ```bash
-    cd smart-contracts
-    pip install -r requirements.txt
-    # Contracts are in smart-contracts/ directory
-    ```
+## 🏗️ Architecture
 
-## Development
+```
+┌──────────────────────────────────────────────────────────┐
+│                     Frontend (Next.js)                   │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────┐│
+│  │  Create   │ │Marketplace│ │My Tickets│ │  Organizer   ││
+│  │  Event    │ │ (Browse)  │ │(Claim/QR)│ │  Dashboard   ││
+│  └────┬─────┘ └────┬─────┘ └────┬─────┘ └──────┬───────┘│
+│       │            │            │               │        │
+│       └────────────┴────────────┴───────────────┘        │
+│                         │  Pera Wallet                   │
+└─────────────────────────┼────────────────────────────────┘
+                          │ algosdk
+┌─────────────────────────┼────────────────────────────────┐
+│           Algorand Testnet Blockchain                    │
+│  ┌──────────────────┐  ┌───────────────────────────────┐ │
+│  │  EventFactory     │  │  TicketManager (per event)    │ │
+│  │  (Registry)       │  │  • create_event()             │ │
+│  │  • register_event │  │  • buy_ticket() → mint NFT    │ │
+│  │  • get_event()    │  │  • claim_ticket() → transfer  │ │
+│  │  • get_event_count│  │  • check_in() → verify        │ │
+│  │                   │  │  • withdraw_funds()            │ │
+│  │  BoxMap: events   │  │  • get_event_info()            │ │
+│  └──────────────────┘  │  BoxMap: tickets               │ │
+│                        └───────────────────────────────┘ │
+└──────────────────────────────────────────────────────────┘
+```
 
-This project uses PyTeal for smart contracts.
+---
 
-### Smart Contracts
-Located in `smart-contracts/`. The core logic resides in `event_factory.py` and `ticket_manager.py`.
+## 🛠️ Tech Stack
 
-### Frontend
-Located in `frontend/`. Uses `algosdk` for blockchain interaction.
+| Layer | Technology |
+|---|---|
+| **Smart Contracts** | **Algorand Python (ARC4)** — compiled with **PuyaPy v5** via **AlgoKit** |
+| **Frontend** | Next.js 14, React 18, Tailwind CSS, Shadcn/UI |
+| **Wallet** | Pera Wallet (`@txnlab/use-wallet`) |
+| **SDK** | `algosdk` v2 |
+| **Network** | Algorand TestNet (`testnet-api.algonode.cloud`) |
+| **Contract Spec** | ARC-56 (auto-generated by PuyaPy) |
 
-## License
+---
+
+## 📁 Project Structure
+
+```
+web3/
+├── smart-contracts/
+│   ├── algokit_contracts/           # AlgoKit Algorand Python contracts
+│   │   ├── ticket_manager.py        # Main ticketing contract (ARC4)
+│   │   ├── event_factory.py         # Event registry contract (ARC4)
+│   │   └── artifacts/               # PuyaPy-compiled output
+│   │       ├── ticket_manager/
+│   │       │   ├── TicketManager.approval.teal
+│   │       │   ├── TicketManager.clear.teal
+│   │       │   └── TicketManager.arc56.json
+│   │       └── event_factory/
+│   │           ├── EventFactory.approval.teal
+│   │           ├── EventFactory.clear.teal
+│   │           └── EventFactory.arc56.json
+│   ├── ticket_manager.py            # Legacy PyTeal (reference)
+│   └── event_factory.py             # Legacy PyTeal (reference)
+│
+├── frontend/
+│   ├── app/
+│   │   ├── page.tsx                 # Landing page
+│   │   ├── create-event/page.tsx    # Create & deploy events
+│   │   ├── events/page.tsx          # Marketplace (browse & buy)
+│   │   ├── my-tickets/page.tsx      # View, claim, QR codes
+│   │   ├── verify/page.tsx          # Organizer dashboard
+│   │   └── event/[id]/page.tsx      # Event detail page
+│   ├── components/
+│   │   ├── Header.tsx
+│   │   ├── Footer.tsx
+│   │   ├── ConnectWallet.tsx
+│   │   └── WalletProvider.tsx
+│   ├── utils/
+│   │   ├── events.ts                # Event fetching utilities
+│   │   └── algorand.ts              # Algod client config
+│   └── public/utils/contracts/      # ABI JSON + TEAL for browser
+│
+└── README.md
+```
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+- **Node.js** v18+
+- **Python** v3.10+ (for contract compilation)
+- **AlgoKit** (`pip install algokit`)
+- **Pera Wallet** (mobile app or browser extension, set to **TestNet**)
+
+### 1. Clone & Install
+
+```bash
+git clone https://github.com/samartha04/algorand-ticketing.git
+cd algorand-ticketing/frontend
+npm install
+```
+
+### 2. Run the Frontend
+
+```bash
+npm run dev
+# → Opens at http://localhost:3000
+```
+
+### 3. Get Test ALGO
+
+1. Open Pera Wallet → switch to **TestNet**
+2. Visit [Algorand Testnet Faucet](https://bank.testnet.algorand.network/)
+3. Dispense 10+ ALGO to your wallet address
+
+### 4. Compile Contracts (Optional — pre-compiled TEAL is included)
+
+```bash
+pip install puyapy
+puyapy smart-contracts/algokit_contracts/ticket_manager.py --output-teal --out-dir smart-contracts/algokit_contracts/artifacts/ticket_manager
+puyapy smart-contracts/algokit_contracts/event_factory.py --output-teal --out-dir smart-contracts/algokit_contracts/artifacts/event_factory
+```
+
+---
+
+## 📖 User Flow
+
+### For Event Organizers
+1. **Connect** Pera Wallet
+2. **Create Event** → Deploy Factory (one-time) → Deploy Event Contract → Set price & supply
+3. **Share** the Factory App ID with attendees
+4. **Verify** tickets at the door using the Organizer Dashboard
+5. **Withdraw** revenue from ticket sales
+
+### For Attendees
+1. **Connect** Pera Wallet
+2. **Browse** events on the Marketplace (enter Factory App ID)
+3. **Buy** a ticket (pays in ALGO → receives NFT ticket)
+4. **Claim** the ticket (transfers NFT to your wallet)
+5. **Show QR** code at the event entrance
+
+---
+
+## 🔗 Smart Contract Methods
+
+### TicketManager (per event)
+| Method | Description | Access |
+|---|---|---|
+| `create_event(price, supply)` | Initialize event with ticket price and supply | Creator only |
+| `buy_ticket(payment)` | Purchase ticket; mints NFT | Any user |
+| `claim_ticket(ticket_id)` | Transfer NFT to buyer's wallet | Ticket owner |
+| `check_in(ticket_id)` | Mark ticket as used at venue | Organizer only |
+| `withdraw_funds(amount)` | Withdraw sales revenue | Organizer only |
+| `get_event_info()` | Returns (price, supply, sold) | Anyone (read-only) |
+
+### EventFactory (global registry)
+| Method | Description | Access |
+|---|---|---|
+| `register_event(app_id, name)` | Register a new event | Any user |
+| `get_event_count()` | Total registered events | Anyone (read-only) |
+| `get_event(index)` | Get event details by index | Anyone (read-only) |
+
+---
+
+## 🔑 Key Algorand Features Used
+
+- **ASAs (Algorand Standard Assets)** — Tickets as unique NFTs
+- **Inner Transactions** — Contract mints and transfers ASAs autonomously
+- **Box Storage** — Scalable on-chain storage for ticket metadata
+- **Atomic Transfers** — Payment + ticket minting in a single group transaction
+- **ARC-4 ABI** — Typed method calls for contract interaction
+- **ARC-56 Spec** — Modern contract specification with source maps
+
+---
+
+## 📄 License
+
 MIT
+
+---
+
+Built with ❤️ on Algorand for HackSeries 2

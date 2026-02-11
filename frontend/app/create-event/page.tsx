@@ -3,268 +3,250 @@
 import { useWallet } from '@txnlab/use-wallet';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import algosdk from 'algosdk';
+import { executeATC, dummySigner } from '@/utils/signer';
+
+// Step indicator
+function StepIndicator({ steps, currentStep }: { steps: string[], currentStep: number }) {
+    return (
+        <div className="flex items-center justify-center mb-8">
+            {steps.map((step, index) => (
+                <div key={step} className="flex items-center">
+                    <div className="flex flex-col items-center">
+                        <div className={`
+                            flex items-center justify-center w-10 h-10 rounded-full border-2 transition-all duration-300 font-bold text-sm
+                            ${index < currentStep
+                                ? 'bg-green-500 border-green-500 text-white'
+                                : index === currentStep
+                                    ? 'gradient-purple border-[#685AFF] text-white'
+                                    : 'bg-gray-50 border-gray-200 text-gray-400'}
+                        `}>
+                            {index < currentStep ? (
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" /></svg>
+                            ) : (
+                                <span>{index + 1}</span>
+                            )}
+                        </div>
+                        <span className={`text-xs mt-1.5 font-medium ${index <= currentStep ? 'text-gray-700' : 'text-gray-400'}`}>{step}</span>
+                    </div>
+                    {index < steps.length - 1 && (
+                        <div className={`w-16 h-0.5 mx-2 mb-5 transition-all duration-300 rounded-full ${index < currentStep ? 'bg-green-500' : 'bg-gray-200'}`} />
+                    )}
+                </div>
+            ))}
+        </div>
+    );
+}
 
 export default function CreateEventPage() {
-    const { activeAccount, signTransactions, sendTransactions } = useWallet();
+    const { activeAccount, signTransactions } = useWallet();
     const [eventName, setEventName] = useState('');
-    const [price, setPrice] = useState('1000000'); // 1 Algo
+    const [price, setPrice] = useState('1');
     const [supply, setSupply] = useState('100');
     const [isLoading, setIsLoading] = useState(false);
     const [status, setStatus] = useState('');
-
+    const [currentStep, setCurrentStep] = useState(0);
     const [factoryAppId, setFactoryAppId] = useState<number>(0);
+    const [createdAppId, setCreatedAppId] = useState<number | null>(null);
+
+    const steps = ['Deploy', 'Initialize', 'Register'];
 
     const deployFactory = async () => {
         if (!activeAccount) return;
-        setIsLoading(true);
-        setStatus('Deploying Event Factory...');
+        setIsLoading(true); setStatus('Deploying Event Factory...');
         try {
             const algodClient = new algosdk.Algodv2('', 'https://testnet-api.algonode.cloud', 443);
             const approvalProgram = await fetch('/utils/contracts/event_factory_approval.teal').then(r => r.text());
             const clearProgram = await fetch('/utils/contracts/event_factory_clear.teal').then(r => r.text());
-
             const approvalBin = await algodClient.compile(approvalProgram).do();
             const clearBin = await algodClient.compile(clearProgram).do();
-
             const params = await algodClient.getTransactionParams().do();
-
             const approvalBytes = new Uint8Array(atob(approvalBin.result).split('').map(x => x.charCodeAt(0)));
             const clearBytes = new Uint8Array(atob(clearBin.result).split('').map(x => x.charCodeAt(0)));
-
-            const txn = algosdk.makeApplicationCreateTxnFromObject({
-                from: activeAccount.address,
-                approvalProgram: approvalBytes,
-                clearProgram: clearBytes,
-                numGlobalByteSlices: 0,
-                numGlobalInts: 1, // EventCount
-                numLocalByteSlices: 0,
-                numLocalInts: 0,
-                onComplete: algosdk.OnApplicationComplete.NoOpOC,
-                suggestedParams: params,
-                note: new TextEncoder().encode("Event Factory")
-            });
-
-            const signedTxn = await signTransactions([txn.toByte()]);
-            const { id } = await sendTransactions(signedTxn, 4);
-            const ptx = await algodClient.pendingTransactionInformation(id).do();
+            const txn = algosdk.makeApplicationCreateTxnFromObject({ from: activeAccount.address, approvalProgram: approvalBytes, clearProgram: clearBytes, numGlobalByteSlices: 0, numGlobalInts: 1, numLocalByteSlices: 0, numLocalInts: 0, onComplete: algosdk.OnApplicationComplete.NoOpOC, suggestedParams: params, note: new TextEncoder().encode("Event Factory") });
+            // Sign and send directly (no ATC needed for single txns)
+            const encoded = algosdk.encodeUnsignedTransaction(txn);
+            const signedTxns = await signTransactions([encoded]);
+            const { txId } = await algodClient.sendRawTransaction(signedTxns.filter(t => t != null)).do();
+            const ptx = await algosdk.waitForConfirmation(algodClient, txId, 4);
             const appId = ptx["application-index"];
-
             setFactoryAppId(appId);
-            setStatus(`Factory Deployed! App ID: ${appId}`);
-        } catch (e: any) {
-            console.error(e);
-            setStatus(`Factory Error: ${e.message}`);
-        } finally {
-            setIsLoading(false);
-        }
+            setStatus(`✓ Factory deployed: ${appId}`);
+        } catch (e: any) { console.error(e); setStatus(`Error: ${e.message}`); }
+        finally { setIsLoading(false); }
     };
 
     const deployEvent = async () => {
-        if (!activeAccount) {
-            setStatus('Please connect wallet first');
-            return;
-        }
-
-        setIsLoading(true);
-        setStatus('Deploying event contract...');
-
+        if (!activeAccount) { setStatus('Connect wallet first'); return; }
+        if (!eventName.trim()) { setStatus('Enter an event name'); return; }
+        setIsLoading(true); setCurrentStep(0); setCreatedAppId(null);
         try {
             const algodClient = new algosdk.Algodv2('', 'https://testnet-api.algonode.cloud', 443);
-
-            // 1. Fetch compiled TEAL
-            const approvalProgram = await fetch('/utils/contracts/ticket_manager_approval.teal').then(r => r.text());
+            setStatus('Deploying smart contract...');
+            const approvalProgram = await fetch('/utils/contracts/ticket_manager_approval_v2.teal').then(r => r.text());
             const clearProgram = await fetch('/utils/contracts/ticket_manager_clear.teal').then(r => r.text());
-
             const approvalBin = await algodClient.compile(approvalProgram).do();
             const clearBin = await algodClient.compile(clearProgram).do();
-
-            // 2. createApplication transaction
             const params = await algodClient.getTransactionParams().do();
-
-            // Schema: 
-            // Global: Price, Supply, Sold, Organizer (4 Ints? No, Organizer is Bytes. Price, Supply, Sold are Ints. 3 Ints, 1 Byte)
-            // Local: None
             const approvalProgramBytes = new Uint8Array(atob(approvalBin.result).split('').map(x => x.charCodeAt(0)));
             const clearProgramBytes = new Uint8Array(atob(clearBin.result).split('').map(x => x.charCodeAt(0)));
-
-            const txn = algosdk.makeApplicationCreateTxnFromObject({
-                from: activeAccount.address,
-                approvalProgram: approvalProgramBytes,
-                clearProgram: clearProgramBytes,
-                numGlobalByteSlices: 1, // Organizer
-                numGlobalInts: 3,       // Price, Supply, Sold
-                numLocalByteSlices: 0,
-                numLocalInts: 0,
-                onComplete: algosdk.OnApplicationComplete.NoOpOC,
-                suggestedParams: params,
-                appArgs: [], // We'll initialize in a separate call or could do it here if method allowed creation args
-                note: new TextEncoder().encode("Event Ticket Manager")
-            });
-
-            // Sign and Send Create App
-            const signedTxn = await signTransactions([txn.toByte()]);
-            const { id } = await sendTransactions(signedTxn, 4); // Wait 4 rounds
-
-            const ptx = await algodClient.pendingTransactionInformation(id).do();
+            const txn = algosdk.makeApplicationCreateTxnFromObject({ from: activeAccount.address, approvalProgram: approvalProgramBytes, clearProgram: clearProgramBytes, numGlobalByteSlices: 1, numGlobalInts: 3, numLocalByteSlices: 0, numLocalInts: 0, onComplete: algosdk.OnApplicationComplete.NoOpOC, suggestedParams: params, note: new TextEncoder().encode("Event Ticket Manager") });
+            // Sign and send directly
+            const encoded = algosdk.encodeUnsignedTransaction(txn);
+            const signedTxns = await signTransactions([encoded]);
+            const { txId } = await algodClient.sendRawTransaction(signedTxns.filter(t => t != null)).do();
+            const ptx = await algosdk.waitForConfirmation(algodClient, txId, 4);
             const appId = ptx["application-index"];
+            setCurrentStep(1); setCreatedAppId(appId);
 
-            setStatus(`Contract Deployed! App ID: ${appId}. initializing...`);
-
-            // 3. Initialize Contract (create_event method)
-            // Need the ABI method definition
+            setStatus('Initializing event...');
             const contractJson = await fetch('/utils/contracts/ticket_manager_contract.json').then(r => r.json());
             const contract = new algosdk.ABIContract(contractJson);
             const method = contract.getMethodByName('create_event');
-
-            // App Call to Initialize
+            const priceInMicroAlgos = Math.floor(parseFloat(price) * 1000000);
+            const initParams = await algodClient.getTransactionParams().do();
             const atc = new algosdk.AtomicTransactionComposer();
-            atc.addMethodCall({
-                appID: appId,
-                method: method,
-                methodArgs: [
-                    parseInt(price),
-                    parseInt(supply)
-                ],
-                sender: activeAccount.address,
-                signer: async (txns) => {
-                    const s = await signTransactions(txns.map(t => t.toByte()));
-                    return s;
-                },
-                suggestedParams: await algodClient.getTransactionParams().do()
+            const fundTxn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
+                from: activeAccount.address,
+                to: algosdk.getApplicationAddress(appId),
+                amount: 1_000_000,
+                suggestedParams: initParams
             });
+            atc.addTransaction({ txn: fundTxn, signer: dummySigner });
+            atc.addMethodCall({ appID: appId, method, methodArgs: [priceInMicroAlgos, parseInt(supply)], sender: activeAccount.address, signer: dummySigner, suggestedParams: initParams });
+            await executeATC(atc, algodClient, signTransactions);
+            setCurrentStep(2);
 
-            await atc.execute(algodClient, 4);
-
-            setStatus(`Event Initialized! Registering with Factory...`);
-
-            // 4. Register with Factory
             if (factoryAppId !== 0) {
+                setStatus('Registering with factory...');
                 const factoryJson = await fetch('/utils/contracts/event_factory_contract.json').then(r => r.json());
                 const factoryContract = new algosdk.ABIContract(factoryJson);
                 const registerMethod = factoryContract.getMethodByName('register_event');
-
-                // Fetch current EventCount to determine Box Key
                 const facAppInfo = await algodClient.getApplicationByID(factoryAppId).do();
                 const globalState = facAppInfo.params["global-state"];
-                const countKey = btoa("EventCount"); // Key in global state
+                const countKey = btoa("event_count");
                 const countState = globalState?.find((s: any) => s.key === countKey);
                 const eventCount = countState ? countState.value.uint : 0;
-
-                // Encode Box Key (Uint64)
-                const boxKey = algosdk.encodeUint64(eventCount);
-
+                const eventsPrefix = new TextEncoder().encode("events");
+                const rawKey = algosdk.encodeUint64(eventCount);
+                const boxKey = new Uint8Array(eventsPrefix.length + rawKey.length);
+                boxKey.set(eventsPrefix, 0);
+                boxKey.set(rawKey, eventsPrefix.length);
                 const atcFactory = new algosdk.AtomicTransactionComposer();
                 const factoryParams = await algodClient.getTransactionParams().do();
-
-                // MBR Payment: 0.1 Algo (conservative)
                 const factoryAddr = algosdk.getApplicationAddress(factoryAppId);
-                const payTxn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
-                    from: activeAccount.address,
-                    to: factoryAddr,
-                    amount: 105700, // Min Balance for Box (2500 + 400 * (key+value_size)) approx. Safe 0.1A
-                    suggestedParams: factoryParams
-                });
-
-                atcFactory.addTransaction({ txn: payTxn, signer: async (txns) => signTransactions(txns.map(t => t.toByte())) });
-
-                atcFactory.addMethodCall({
-                    appID: factoryAppId,
-                    method: registerMethod,
-                    methodArgs: [
-                        appId,
-                        eventName
-                    ],
-                    boxes: [
-                        { appIndex: 0, name: boxKey } // Reference the box we are creating
-                    ],
-                    sender: activeAccount.address,
-                    signer: async (txns) => signTransactions(txns.map(t => t.toByte())),
-                    suggestedParams: factoryParams
-                });
-
-                await atcFactory.execute(algodClient, 4);
-                setStatus(`Success! Event Created & Registered. App ID: ${appId}`);
+                const payTxn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({ from: activeAccount.address, to: factoryAddr, amount: 200000, suggestedParams: factoryParams });
+                atcFactory.addTransaction({ txn: payTxn, signer: dummySigner });
+                atcFactory.addMethodCall({ appID: factoryAppId, method: registerMethod, methodArgs: [appId, eventName], boxes: [{ appIndex: 0, name: boxKey }], sender: activeAccount.address, signer: dummySigner, suggestedParams: factoryParams });
+                await executeATC(atcFactory, algodClient, signTransactions);
+                setCurrentStep(3);
+                setStatus(`🎉 Event created & registered! Event ID: ${appId} | Factory ID: ${factoryAppId}`);
             } else {
-                setStatus(`Success! Event Created (Not Registered). App ID: ${appId}`);
+                setCurrentStep(3);
+                setStatus(`✓ Event created! ID: ${appId} (Not registered - No Factory ID found. Did you refresh?)`);
             }
-
-        } catch (error: any) {
-            console.error(error);
-            setStatus(`Error: ${error.message}`);
-        } finally {
-            setIsLoading(false);
-        }
+        } catch (error: any) { console.error(error); setStatus(`Error: ${error.message}`); }
+        finally { setIsLoading(false); }
     };
 
     return (
-        <div className="container mx-auto py-10">
-            <Card className="max-w-lg mx-auto">
-                <CardHeader>
-                    <CardTitle>Create New Event</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                    <div className="p-4 border rounded bg-slate-50">
-                        <label className="text-xs font-bold text-gray-500 uppercase">Event Factory Registry</label>
-                        <div className="flex gap-2 mt-2">
-                            <input
-                                className="flex-1 p-2 text-sm border rounded"
-                                placeholder="Factory App ID (0 to deploy new)"
-                                type="number"
-                                value={factoryAppId}
-                                onChange={e => setFactoryAppId(parseInt(e.target.value))}
-                            />
-                            <Button size="sm" variant="outline" onClick={deployFactory}>Deploy New</Button>
+        <div className="min-h-screen bg-white py-12 md:py-16">
+            {/* Header */}
+            <div className="container px-4 md:px-6 mb-10">
+                <div className="text-center">
+                    <p className="text-sm font-bold text-[#685AFF] uppercase tracking-wider mb-3">Event Manager</p>
+                    <h1 className="text-4xl font-extrabold text-gray-900 tracking-tight mb-3">
+                        Create Your Event
+                    </h1>
+                    <p className="text-gray-400 max-w-md mx-auto">
+                        Deploy a smart contract and start selling NFT tickets in minutes
+                    </p>
+                </div>
+            </div>
+
+            {isLoading && <div className="container px-4"><StepIndicator steps={steps} currentStep={currentStep} /></div>}
+
+            <div className="container px-4 md:px-6">
+                <div className="max-w-xl mx-auto bg-white border border-gray-100 rounded-3xl shadow-xl shadow-gray-100/50 p-8">
+                    <div className="space-y-6">
+                        {/* Factory */}
+                        <div className="p-5 rounded-2xl bg-gray-50 border border-gray-100 space-y-3">
+                            <div className="flex items-center gap-2 mb-1">
+                                <div className="w-6 h-6 rounded-lg bg-[#E8E5FF] flex items-center justify-center">
+                                    <svg className="w-3.5 h-3.5 text-[#685AFF]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
+                                </div>
+                                <label className="text-sm font-bold text-gray-800">Event Factory</label>
+                            </div>
+                            <p className="text-xs text-gray-400">Enter an existing Factory ID or deploy a new one</p>
+                            <div className="flex gap-3">
+                                <input className="flex-1 px-4 py-3 bg-white border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#685AFF]/30 focus:border-[#685AFF] transition-all text-sm" placeholder="Factory App ID" type="number" value={factoryAppId || ''} onChange={e => setFactoryAppId(parseInt(e.target.value) || 0)} />
+                                <Button variant="outline" onClick={deployFactory} disabled={isLoading} className="whitespace-nowrap">
+                                    Deploy New
+                                </Button>
+                            </div>
                         </div>
-                    </div>
 
-                    <div className="space-y-2">
-                        <label className="text-sm font-medium">Event Name</label>
-                        <input
-                            className="w-full p-2 border rounded-md"
-                            value={eventName}
-                            onChange={(e) => setEventName(e.target.value)}
-                            placeholder="My Awesome Concert"
-                        />
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
+                        {/* Event Name */}
                         <div className="space-y-2">
-                            <label className="text-sm font-medium">Price (MicroAlgos)</label>
-                            <input
-                                className="w-full p-2 border rounded-md"
-                                type="number"
-                                value={price}
-                                onChange={(e) => setPrice(e.target.value)}
-                            />
+                            <label className="text-sm font-bold text-gray-800">Event Name</label>
+                            <input className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#685AFF]/30 focus:border-[#685AFF] transition-all" value={eventName} onChange={(e) => setEventName(e.target.value)} placeholder="e.g. Summer Music Festival 2024" />
                         </div>
-                        <div className="space-y-2">
-                            <label className="text-sm font-medium">Ticket Supply</label>
-                            <input
-                                className="w-full p-2 border rounded-md"
-                                type="number"
-                                value={supply}
-                                onChange={(e) => setSupply(e.target.value)}
-                            />
+
+                        {/* Price & Supply */}
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                                <label className="text-sm font-bold text-gray-800">Price (ALGO)</label>
+                                <input className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#685AFF]/30 focus:border-[#685AFF] transition-all" type="number" step="0.1" min="0" value={price} onChange={(e) => setPrice(e.target.value)} />
+                            </div>
+                            <div className="space-y-2">
+                                <label className="text-sm font-bold text-gray-800">Total Supply</label>
+                                <input className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#685AFF]/30 focus:border-[#685AFF] transition-all" type="number" min="1" value={supply} onChange={(e) => setSupply(e.target.value)} />
+                            </div>
                         </div>
+
+                        {/* Summary */}
+                        <div className="p-4 rounded-2xl gradient-card-purple border border-[#685AFF]/10">
+                            <div className="flex justify-between text-sm mb-1">
+                                <span className="text-gray-500">Potential Revenue</span>
+                                <span className="font-bold text-gray-900">{(parseFloat(price || '0') * parseInt(supply || '0')).toFixed(2)} ALGO</span>
+                            </div>
+                            <div className="flex justify-between text-sm">
+                                <span className="text-gray-500">Est. Deployment Cost</span>
+                                <span className="text-gray-500">~0.5 ALGO</span>
+                            </div>
+                        </div>
+
+                        {/* Deploy */}
+                        <Button onClick={deployEvent} disabled={isLoading || !activeAccount} className="w-full py-6 text-base gradient-purple text-white shadow-brand-lg hover:shadow-brand rounded-2xl h-14">
+                            {isLoading ? (
+                                <span className="flex items-center gap-3">
+                                    <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                                    {status || 'Processing...'}
+                                </span>
+                            ) : !activeAccount ? 'Connect Wallet to Continue' : 'Deploy Event Contract →'}
+                        </Button>
+
+                        {/* Status */}
+                        {status && !isLoading && (
+                            <div className={`p-4 rounded-xl text-sm font-medium ${status.includes('🎉') || status.includes('✓') ? 'bg-green-50 text-green-700 border border-green-200' : status.includes('Error') ? 'bg-red-50 text-[#FF5B5B] border border-red-200' : 'bg-gray-50 text-gray-500 border border-gray-200'}`}>
+                                {status}
+                            </div>
+                        )}
+
+                        {createdAppId && !isLoading && (
+                            <div className="p-4 rounded-xl bg-green-50 border border-green-200 flex items-center gap-3">
+                                <div className="w-8 h-8 rounded-lg bg-green-500 flex items-center justify-center text-white flex-shrink-0">
+                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" /></svg>
+                                </div>
+                                <div>
+                                    <p className="font-bold text-green-800 text-sm">Event Created!</p>
+                                    <p className="text-green-600 text-xs font-mono">App ID: {createdAppId}</p>
+                                </div>
+                            </div>
+                        )}
                     </div>
-
-                    <Button
-                        onClick={deployEvent}
-                        disabled={isLoading || !activeAccount}
-                        className="w-full"
-                    >
-                        {isLoading ? 'Processing...' : 'Deploy Event Contract'}
-                    </Button>
-
-                    {status && (
-                        <div className="p-4 bg-muted rounded-md text-sm font-mono break-all">
-                            {status}
-                        </div>
-                    )}
-                </CardContent>
-            </Card>
+                </div>
+            </div>
         </div>
     );
 }

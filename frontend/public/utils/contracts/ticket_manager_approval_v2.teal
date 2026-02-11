@@ -118,7 +118,7 @@ buy_ticket:
     app_global_get_ex
     assert // stack: sold, sold, supply
     < 
-    assert // supply > sold
+    assert // supply > sold (not sold out)
     
     // Increment 'sold' global
     dup

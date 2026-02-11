@@ -54,7 +54,7 @@ const deployEventFactory = async () => {
             approvalProgram: approvalBin,
             clearProgram: clearBin,
             numGlobalByteSlices: 0,
-            numGlobalInts: 1, // EventCount
+            numGlobalInts: 1, // event_count
             numLocalByteSlices: 0,
             numLocalInts: 0,
             appArgs: [],
