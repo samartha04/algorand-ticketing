@@ -39,6 +39,8 @@ export default function MyTicketsPage() {
     const { activeAccount, signTransactions } = useWallet();
     const { setStatus: setTxStatus } = useTxStatus();
     const [factoryAppId, setFactoryAppId] = useState<number>(0);
+    const [confirmOpen, setConfirmOpen] = useState(false);
+    const [confirmData, setConfirmData] = useState<{ amount?: number; fee?: number; reserve?: number; } | null>(null);
     const [tickets, setTickets] = useState<Ticket[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [status, setStatus] = useState('');
@@ -105,6 +107,8 @@ export default function MyTicketsPage() {
             setTickets(myTickets);
             if (myTickets.length === 0) setStatus('No tickets found');
         } catch (e: any) { console.error(e); setStatus(`Error: ${e.message}`); }
+        setConfirmData({ amount: 0, fee: 0.002 + 0.001, reserve: 0.1 });
+        setConfirmOpen(true);
         finally { setIsLoading(false); }
     };
 
@@ -128,6 +132,30 @@ export default function MyTicketsPage() {
             atc.addMethodCall({ appID: ticket.appId, method, methodArgs: [ticket.index], boxes: [{ appIndex: 0, name: claimBoxKey }], appAccounts: [activeAccount.address], appForeignAssets: [ticket.assetId], sender: activeAccount.address, signer: dummySigner, suggestedParams: sp });
             await executeATC(atc, algodClient, signTransactions, 4, (s) => {
                 if (s.state === 'pending') setTxStatus({ state: 'pending', message: s.message, txId: s.txId, explorerUrl: s.explorerUrl });
+    const claimTicketConfirmed = async (ticket?: Ticket) => {
+        const t = ticket || (window as any).__pendingClaimTicket as Ticket;
+        if (!t) return;
+        setClaimingId(t.assetId);
+        try {
+            const contractJson = await fetch('/utils/contracts/ticket_manager_contract.json').then(r => r.json());
+            const contract = new algosdk.ABIContract(contractJson);
+            const method = contract.getMethodByName('claim_ticket');
+            const atc = new algosdk.AtomicTransactionComposer();
+            const optInTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({ from: activeAccount.address, to: activeAccount.address, assetIndex: t.assetId, amount: 0, suggestedParams: await algodClient.getTransactionParams().do() });
+            atc.addTransaction({ txn: optInTxn, signer: dummySigner });
+            const sp = await algodClient.getTransactionParams().do(); sp.fee = 2000; sp.flatFee = true;
+            const ticketsPrefix = new TextEncoder().encode("tickets");
+            const rawKey = algosdk.encodeUint64(t.index);
+            const claimBoxKey = new Uint8Array(ticketsPrefix.length + rawKey.length);
+            claimBoxKey.set(ticketsPrefix, 0);
+            claimBoxKey.set(rawKey, ticketsPrefix.length);
+            // Inner axfer: asset must be in foreign assets array; receiver must be in accounts array
+            atc.addMethodCall({ appID: t.appId, method, methodArgs: [t.index], boxes: [{ appIndex: 0, name: claimBoxKey }], appAccounts: [activeAccount.address], appForeignAssets: [t.assetId], sender: activeAccount.address, signer: dummySigner, suggestedParams: sp });
+            await executeATC(atc, algodClient, signTransactions);
+            setStatus('🎉 Ticket claimed!');
+            fetchAll();
+        } catch (e: any) { console.error(e); setStatus(`Claim failed: ${e.message}`); }
+        finally { setClaimingId(null); delete (window as any).__pendingClaimTicket; setConfirmOpen(false); }
                 if (s.state === 'success') setTxStatus({ state: 'success', message: s.message, txId: s.txId, explorerUrl: s.explorerUrl });
                 if (s.state === 'failed') setTxStatus({ state: 'failed', message: s.message });
             });
@@ -139,6 +167,7 @@ export default function MyTicketsPage() {
 
     return (
         <div className="min-h-screen bg-white">
+            <TxConfirm open={confirmOpen} title="Confirm Claim" message="Claiming will opt-in to the asset and lock an estimated reserve." amountALGO={confirmData?.amount} feeALGO={confirmData?.fee} reserveALGO={confirmData?.reserve} onCancel={() => setConfirmOpen(false)} onConfirm={async () => { await claimTicketConfirmed(); }} />
             {/* Hero */}
             <section className="relative py-16 overflow-hidden">
                 <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[600px] h-[600px] rounded-full opacity-[0.07] blur-3xl" style={{ background: 'radial-gradient(circle, #10b981, transparent 70%)' }} />
