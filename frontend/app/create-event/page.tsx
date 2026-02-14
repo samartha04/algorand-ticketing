@@ -83,7 +83,7 @@ export default function CreateEventPage() {
         try {
             const algodClient = new algosdk.Algodv2('', 'https://testnet-api.algonode.cloud', 443);
             setStatus('Deploying smart contract...');
-            const approvalProgram = await fetch('/utils/contracts/ticket_manager_approval_v2.teal').then(r => r.text());
+            const approvalProgram = await fetch('/utils/contracts/ticket_manager_approval.teal').then(r => r.text());
             const clearProgram = await fetch('/utils/contracts/ticket_manager_clear.teal').then(r => r.text());
             const approvalBin = await algodClient.compile(approvalProgram).do();
             const clearBin = await algodClient.compile(clearProgram).do();
@@ -119,13 +119,9 @@ export default function CreateEventPage() {
 
             if (factoryAppId !== 0) {
                 setStatus('Registering with factory...');
-                const factoryJson = await fetch('/utils/contracts/event_factory_contract.json').then(r => r.json());
-                const factoryContract = new algosdk.ABIContract(factoryJson);
-                const registerMethod = factoryContract.getMethodByName('register_event');
                 const facAppInfo = await algodClient.getApplicationByID(factoryAppId).do();
                 const globalState = facAppInfo.params["global-state"];
-                const countKey = btoa("event_count");
-                const countState = globalState?.find((s: any) => s.key === countKey);
+                const countState = globalState?.find((s: any) => s.key === btoa("event_count")) ?? globalState?.find((s: any) => s.key === btoa("EventCount"));
                 const eventCount = countState ? countState.value.uint : 0;
                 const eventsPrefix = new TextEncoder().encode("events");
                 const rawKey = algosdk.encodeUint64(eventCount);
@@ -137,7 +133,23 @@ export default function CreateEventPage() {
                 const factoryAddr = algosdk.getApplicationAddress(factoryAppId);
                 const payTxn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({ from: activeAccount.address, to: factoryAddr, amount: 200000, suggestedParams: factoryParams });
                 atcFactory.addTransaction({ txn: payTxn, signer: dummySigner });
-                atcFactory.addMethodCall({ appID: factoryAppId, method: registerMethod, methodArgs: [appId, eventName], boxes: [{ appIndex: 0, name: boxKey }], sender: activeAccount.address, signer: dummySigner, suggestedParams: factoryParams });
+                // Build register_event call with exact selector from event_factory_approval.teal so it matches deployed AlgoKit factory
+                const REGISTER_EVENT_SELECTOR = new Uint8Array([0x91, 0x5e, 0x7d, 0x3d]);
+                const nameBytes = new TextEncoder().encode(eventName);
+                const nameEncoded = new Uint8Array(2 + nameBytes.length);
+                nameEncoded[0] = (nameBytes.length >> 8) & 0xff;
+                nameEncoded[1] = nameBytes.length & 0xff;
+                nameEncoded.set(nameBytes, 2);
+                const registerAppArgs = [REGISTER_EVENT_SELECTOR, algosdk.encodeUint64(appId), nameEncoded];
+                const registerTxn = algosdk.makeApplicationCallTxnFromObject({
+                    from: activeAccount.address,
+                    appIndex: factoryAppId,
+                    onComplete: algosdk.OnApplicationComplete.NoOpOC,
+                    appArgs: registerAppArgs,
+                    boxes: [{ appIndex: factoryAppId, name: boxKey }],
+                    suggestedParams: { ...factoryParams, fee: 2000, flatFee: true },
+                });
+                atcFactory.addTransaction({ txn: registerTxn, signer: dummySigner });
                 await executeATC(atcFactory, algodClient, signTransactions);
                 setCurrentStep(3);
                 setStatus(`🎉 Event created & registered! Event ID: ${appId} | Factory ID: ${factoryAppId}`);
@@ -247,6 +259,8 @@ export default function CreateEventPage() {
                     </div>
                 </div>
             </div>
+
+
         </div>
     );
 }

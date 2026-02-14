@@ -1,496 +1,437 @@
-#pragma version 11
-#pragma typetrack false
+#pragma version 10
+txn NumAppArgs
+int 0
+==
+bnz main_l14
+txna ApplicationArgs 0
+method "create_event(uint64,uint64)void"
+==
+bnz main_l13
+txna ApplicationArgs 0
+method "buy_ticket(pay)void"
+==
+bnz main_l12
+txna ApplicationArgs 0
+method "claim_ticket(uint64)void"
+==
+bnz main_l11
+txna ApplicationArgs 0
+method "check_in(uint64)void"
+==
+bnz main_l10
+txna ApplicationArgs 0
+method "withdraw_funds(uint64)void"
+==
+bnz main_l9
+txna ApplicationArgs 0
+method "get_event_info()(uint64,uint64,uint64)"
+==
+bnz main_l8
+err
+main_l8:
+txn OnCompletion
+int NoOp
+==
+txn ApplicationID
+int 0
+!=
+&&
+assert
+callsub geteventinfocaster_11
+int 1
+return
+main_l9:
+txn OnCompletion
+int NoOp
+==
+txn ApplicationID
+int 0
+!=
+&&
+assert
+callsub withdrawfundscaster_10
+int 1
+return
+main_l10:
+txn OnCompletion
+int NoOp
+==
+txn ApplicationID
+int 0
+!=
+&&
+assert
+callsub checkincaster_9
+int 1
+return
+main_l11:
+txn OnCompletion
+int NoOp
+==
+txn ApplicationID
+int 0
+!=
+&&
+assert
+callsub claimticketcaster_8
+int 1
+return
+main_l12:
+txn OnCompletion
+int NoOp
+==
+txn ApplicationID
+int 0
+!=
+&&
+assert
+callsub buyticketcaster_7
+int 1
+return
+main_l13:
+txn OnCompletion
+int NoOp
+==
+txn ApplicationID
+int 0
+!=
+&&
+assert
+callsub createeventcaster_6
+int 1
+return
+main_l14:
+txn OnCompletion
+int NoOp
+==
+bnz main_l24
+txn OnCompletion
+int OptIn
+==
+bnz main_l23
+txn OnCompletion
+int CloseOut
+==
+bnz main_l22
+txn OnCompletion
+int UpdateApplication
+==
+bnz main_l21
+txn OnCompletion
+int DeleteApplication
+==
+bnz main_l20
+err
+main_l20:
+txn Sender
+global CreatorAddress
+==
+return
+main_l21:
+txn Sender
+global CreatorAddress
+==
+return
+main_l22:
+int 1
+return
+main_l23:
+int 1
+return
+main_l24:
+txn ApplicationID
+int 0
+==
+assert
+int 1
+return
 
-// algopy.arc4.ARC4Contract.approval_program() -> uint64:
-main:
-    intcblock 0 1 8
-    bytecblock "sold" "price" "supply" "organizer" "tickets" 0x151f7c75
-    txn ApplicationID
-    bnz main_after_if_else@2
-    // algokit_contracts/ticket_manager.py:52
-    // self.price = UInt64(0)
-    bytec_1 // "price"
-    intc_0 // 0
-    app_global_put
-    // algokit_contracts/ticket_manager.py:53
-    // self.supply = UInt64(0)
-    bytec_2 // "supply"
-    intc_0 // 0
-    app_global_put
-    // algokit_contracts/ticket_manager.py:54
-    // self.sold = UInt64(0)
-    bytec_0 // "sold"
-    intc_0 // 0
-    app_global_put
-    // algokit_contracts/ticket_manager.py:55
-    // self.organizer = arc4.Address()
-    bytec_3 // "organizer"
-    global ZeroAddress
-    app_global_put
+// create_event
+createevent_0:
+proto 2 0
+txn Sender
+global CreatorAddress
+==
+assert
+byte "Price"
+frame_dig -2
+app_global_put
+byte "Supply"
+frame_dig -1
+app_global_put
+byte "Sold"
+int 0
+app_global_put
+byte "Organizer"
+txn Sender
+app_global_put
+retsub
 
-main_after_if_else@2:
-    // algokit_contracts/ticket_manager.py:35
-    // class TicketManager(ARC4Contract):
-    txn NumAppArgs
-    bz main___algopy_default_create@15
-    txn OnCompletion
-    !
-    assert
-    txn ApplicationID
-    assert
-    pushbytess 0x0b35099e 0x71ef5bd3 0xeca5246a 0x26fe2cdb 0xba90ab54 0xad9661f1 // method "create_event(uint64,uint64)void", method "buy_ticket(pay)uint64", method "claim_ticket(uint64)void", method "check_in(uint64)void", method "withdraw_funds(uint64)void", method "get_event_info()(uint64,uint64,uint64)"
-    txna ApplicationArgs 0
-    match create_event buy_ticket claim_ticket check_in withdraw_funds get_event_info
-    err
+// buy_ticket
+buyticket_1:
+proto 1 0
+frame_dig -1
+gtxns Receiver
+global CurrentApplicationAddress
+==
+assert
+frame_dig -1
+gtxns Amount
+byte "Price"
+app_global_get
+==
+assert
+byte "Sold"
+app_global_get
+byte "Supply"
+app_global_get
+<
+assert
+byte "Sold"
+byte "Sold"
+app_global_get
+int 1
++
+app_global_put
+itxn_begin
+int acfg
+itxn_field TypeEnum
+int 1
+itxn_field ConfigAssetTotal
+int 0
+itxn_field ConfigAssetDecimals
+int 0
+itxn_field ConfigAssetDefaultFrozen
+byte "TICKET"
+itxn_field ConfigAssetName
+byte "TKT"
+itxn_field ConfigAssetUnitName
+itxn_submit
+byte "tickets"
+byte "Sold"
+app_global_get
+itob
+concat
+itxn CreatedAssetID
+itob
+txn Sender
+concat
+byte "\x00"
+concat
+box_put
+byte "AssetID:"
+itxn CreatedAssetID
+itob
+concat
+log
+retsub
 
-main___algopy_default_create@15:
-    txn OnCompletion
-    !
-    txn ApplicationID
-    !
-    &&
-    return
+// claim_ticket
+claimticket_2:
+proto 1 0
+byte "tickets"
+frame_dig -1
+itob
+concat
+box_get
+store 1
+store 0
+load 1
+assert
+load 0
+extract 0 8
+btoi
+store 2
+load 0
+extract 8 32
+store 3
+load 0
+extract 40 1
+store 4
+txn Sender
+load 3
+==
+assert
+load 4
+byte "\x00"
+==
+assert
+itxn_begin
+int axfer
+itxn_field TypeEnum
+global CurrentApplicationAddress
+itxn_field Sender
+load 2
+itxn_field XferAsset
+txn Sender
+itxn_field AssetReceiver
+int 1
+itxn_field AssetAmount
+int 0
+itxn_field Fee
+itxn_submit
+byte "tickets"
+frame_dig -1
+itob
+concat
+int 40
+byte "\x01"
+box_replace
+retsub
 
+// check_in
+checkin_3:
+proto 1 0
+byte "tickets"
+frame_dig -1
+itob
+concat
+box_get
+store 6
+store 5
+load 6
+assert
+txn Sender
+byte "Organizer"
+app_global_get
+==
+assert
+load 5
+extract 40 1
+byte "\x01"
+==
+assert
+byte "tickets"
+frame_dig -1
+itob
+concat
+int 40
+byte "\x02"
+box_replace
+retsub
 
-// algokit_contracts.ticket_manager.TicketManager.create_event[routing]() -> void:
-create_event:
-    // algokit_contracts/ticket_manager.py:58
-    // @arc4.abimethod()
-    txna ApplicationArgs 1
-    dup
-    len
-    intc_2 // 8
-    ==
-    assert // invalid number of bytes for arc4.uint64
-    txna ApplicationArgs 2
-    dup
-    len
-    intc_2 // 8
-    ==
-    assert // invalid number of bytes for arc4.uint64
-    // algokit_contracts/ticket_manager.py:61
-    // assert Txn.sender == Global.creator_address, "Only creator can initialize"
-    txn Sender
-    global CreatorAddress
-    ==
-    assert // Only creator can initialize
-    // algokit_contracts/ticket_manager.py:62
-    // self.price = price.native
-    swap
-    btoi
-    bytec_1 // "price"
-    swap
-    app_global_put
-    // algokit_contracts/ticket_manager.py:63
-    // self.supply = supply.native
-    btoi
-    bytec_2 // "supply"
-    swap
-    app_global_put
-    // algokit_contracts/ticket_manager.py:64
-    // self.sold = UInt64(0)
-    bytec_0 // "sold"
-    intc_0 // 0
-    app_global_put
-    // algokit_contracts/ticket_manager.py:65
-    // self.organizer = arc4.Address(Txn.sender)
-    bytec_3 // "organizer"
-    txn Sender
-    app_global_put
-    // algokit_contracts/ticket_manager.py:58
-    // @arc4.abimethod()
-    intc_1 // 1
-    return
+// withdraw_funds
+withdrawfunds_4:
+proto 1 0
+txn Sender
+byte "Organizer"
+app_global_get
+==
+assert
+itxn_begin
+int pay
+itxn_field TypeEnum
+txn Sender
+itxn_field Receiver
+frame_dig -1
+itxn_field Amount
+int 0
+itxn_field Fee
+itxn_submit
+retsub
 
+// get_event_info
+geteventinfo_5:
+proto 0 1
+byte ""
+int 0
+dupn 4
+byte ""
+dup
+byte "Price"
+app_global_get
+frame_bury 1
+byte "Supply"
+app_global_get
+frame_bury 2
+byte "Sold"
+app_global_get
+frame_bury 3
+frame_dig 1
+itob
+frame_dig 2
+itob
+concat
+frame_dig 3
+itob
+concat
+frame_bury 0
+retsub
 
-// algokit_contracts.ticket_manager.TicketManager.buy_ticket[routing]() -> void:
-buy_ticket:
-    // algokit_contracts/ticket_manager.py:67
-    // @arc4.abimethod()
-    txn GroupIndex
-    intc_1 // 1
-    -
-    dup
-    gtxns TypeEnum
-    intc_1 // pay
-    ==
-    assert // transaction type is pay
-    // algokit_contracts/ticket_manager.py:74-75
-    // # Validate payment
-    // assert payment.receiver == Global.current_application_address, "Pay the contract"
-    dup
-    gtxns Receiver
-    global CurrentApplicationAddress
-    ==
-    assert // Pay the contract
-    // algokit_contracts/ticket_manager.py:76
-    // assert payment.amount == self.price, "Incorrect payment amount"
-    gtxns Amount
-    intc_0 // 0
-    bytec_1 // "price"
-    app_global_get_ex
-    assert // check self.price exists
-    ==
-    assert // Incorrect payment amount
-    // algokit_contracts/ticket_manager.py:77
-    // assert self.sold < self.supply, "Sold out"
-    intc_0 // 0
-    bytec_0 // "sold"
-    app_global_get_ex
-    assert // check self.sold exists
-    intc_0 // 0
-    bytec_2 // "supply"
-    app_global_get_ex
-    assert // check self.supply exists
-    dig 1
-    >
-    assert // Sold out
-    // algokit_contracts/ticket_manager.py:79-80
-    // # Increment sold count
-    // self.sold += 1
-    intc_1 // 1
-    +
-    bytec_0 // "sold"
-    swap
-    app_global_put
-    // algokit_contracts/ticket_manager.py:84-92
-    // itxn.AssetConfig(
-    //     total=1,
-    //     decimals=0,
-    //     default_frozen=False,
-    //     asset_name=b"TICKET",
-    //     unit_name=b"TKT",
-    //     manager=Global.current_application_address,
-    // )
-    // .submit()
-    itxn_begin
-    // algokit_contracts/ticket_manager.py:90
-    // manager=Global.current_application_address,
-    global CurrentApplicationAddress
-    itxn_field ConfigAssetManager
-    // algokit_contracts/ticket_manager.py:89
-    // unit_name=b"TKT",
-    pushbytes 0x544b54
-    itxn_field ConfigAssetUnitName
-    // algokit_contracts/ticket_manager.py:88
-    // asset_name=b"TICKET",
-    pushbytes 0x5449434b4554
-    itxn_field ConfigAssetName
-    // algokit_contracts/ticket_manager.py:87
-    // default_frozen=False,
-    intc_0 // 0
-    itxn_field ConfigAssetDefaultFrozen
-    // algokit_contracts/ticket_manager.py:86
-    // decimals=0,
-    intc_0 // 0
-    itxn_field ConfigAssetDecimals
-    // algokit_contracts/ticket_manager.py:85
-    // total=1,
-    intc_1 // 1
-    itxn_field ConfigAssetTotal
-    // algokit_contracts/ticket_manager.py:84
-    // itxn.AssetConfig(
-    pushint 3 // acfg
-    itxn_field TypeEnum
-    intc_0 // 0
-    itxn_field Fee
-    // algokit_contracts/ticket_manager.py:84-92
-    // itxn.AssetConfig(
-    //     total=1,
-    //     decimals=0,
-    //     default_frozen=False,
-    //     asset_name=b"TICKET",
-    //     unit_name=b"TKT",
-    //     manager=Global.current_application_address,
-    // )
-    // .submit()
-    itxn_submit
-    // algokit_contracts/ticket_manager.py:84-93
-    // itxn.AssetConfig(
-    //     total=1,
-    //     decimals=0,
-    //     default_frozen=False,
-    //     asset_name=b"TICKET",
-    //     unit_name=b"TKT",
-    //     manager=Global.current_application_address,
-    // )
-    // .submit()
-    // .created_asset
-    itxn CreatedAssetID
-    // algokit_contracts/ticket_manager.py:98
-    // owner=arc4.Address(Txn.sender),
-    txn Sender
-    // algokit_contracts/ticket_manager.py:99
-    // status=arc4.UInt8(0),  # Pending
-    pushbytes 0x00
-    // algokit_contracts/ticket_manager.py:96-100
-    // # Store ticket info in box
-    // self.tickets[ticket_asset.id] = TicketInfo(
-    //     owner=arc4.Address(Txn.sender),
-    //     status=arc4.UInt8(0),  # Pending
-    // )
-    concat
-    // algokit_contracts/ticket_manager.py:96-97
-    // # Store ticket info in box
-    // self.tickets[ticket_asset.id] = TicketInfo(
-    swap
-    itob
-    bytec 4 // "tickets"
-    dig 1
-    concat
-    // algokit_contracts/ticket_manager.py:96-100
-    // # Store ticket info in box
-    // self.tickets[ticket_asset.id] = TicketInfo(
-    //     owner=arc4.Address(Txn.sender),
-    //     status=arc4.UInt8(0),  # Pending
-    // )
-    uncover 2
-    box_put
-    // algokit_contracts/ticket_manager.py:67
-    // @arc4.abimethod()
-    bytec 5 // 0x151f7c75
-    swap
-    concat
-    log
-    intc_1 // 1
-    return
+// create_event_caster
+createeventcaster_6:
+proto 0 0
+int 0
+dup
+txna ApplicationArgs 1
+btoi
+frame_bury 0
+txna ApplicationArgs 2
+btoi
+frame_bury 1
+frame_dig 0
+frame_dig 1
+callsub createevent_0
+retsub
 
+// buy_ticket_caster
+buyticketcaster_7:
+proto 0 0
+int 0
+txn GroupIndex
+int 1
+-
+frame_bury 0
+frame_dig 0
+gtxns TypeEnum
+int pay
+==
+assert
+frame_dig 0
+callsub buyticket_1
+retsub
 
-// algokit_contracts.ticket_manager.TicketManager.claim_ticket[routing]() -> void:
-claim_ticket:
-    // algokit_contracts/ticket_manager.py:104
-    // @arc4.abimethod()
-    txna ApplicationArgs 1
-    dup
-    len
-    intc_2 // 8
-    ==
-    assert // invalid number of bytes for arc4.uint64
-    // algokit_contracts/ticket_manager.py:110
-    // asset_id = ticket_id.native
-    btoi
-    // algokit_contracts/ticket_manager.py:111
-    // ticket = self.tickets[asset_id].copy()
-    dup
-    itob
-    bytec 4 // "tickets"
-    swap
-    concat
-    dup
-    box_get
-    assert // check self.tickets entry exists
-    // algokit_contracts/ticket_manager.py:113-114
-    // # Verify caller is the ticket owner
-    // assert Txn.sender == ticket.owner.native, "Not the ticket owner"
-    txn Sender
-    dig 1
-    extract 0 32
-    swap
-    dig 1
-    ==
-    assert // Not the ticket owner
-    // algokit_contracts/ticket_manager.py:116-117
-    // # Verify status is Pending (0)
-    // assert ticket.status == arc4.UInt8(0), "Ticket already claimed"
-    swap
-    extract 32 1
-    pushbytes 0x00
-    b==
-    assert // Ticket already claimed
-    // algokit_contracts/ticket_manager.py:119-124
-    // # Transfer NFT to buyer via inner transaction
-    // itxn.AssetTransfer(
-    //     xfer_asset=Asset(asset_id),
-    //     asset_receiver=Txn.sender,
-    //     asset_amount=1,
-    // ).submit()
-    itxn_begin
-    // algokit_contracts/ticket_manager.py:122
-    // asset_receiver=Txn.sender,
-    txn Sender
-    // algokit_contracts/ticket_manager.py:123
-    // asset_amount=1,
-    intc_1 // 1
-    itxn_field AssetAmount
-    itxn_field AssetReceiver
-    uncover 2
-    itxn_field XferAsset
-    // algokit_contracts/ticket_manager.py:119-120
-    // # Transfer NFT to buyer via inner transaction
-    // itxn.AssetTransfer(
-    pushint 4 // axfer
-    itxn_field TypeEnum
-    intc_0 // 0
-    itxn_field Fee
-    // algokit_contracts/ticket_manager.py:119-124
-    // # Transfer NFT to buyer via inner transaction
-    // itxn.AssetTransfer(
-    //     xfer_asset=Asset(asset_id),
-    //     asset_receiver=Txn.sender,
-    //     asset_amount=1,
-    // ).submit()
-    itxn_submit
-    // algokit_contracts/ticket_manager.py:129
-    // status=arc4.UInt8(1),
-    pushbytes 0x01
-    // algokit_contracts/ticket_manager.py:126-130
-    // # Update status to Claimed (1)
-    // self.tickets[asset_id] = TicketInfo(
-    //     owner=ticket.owner,
-    //     status=arc4.UInt8(1),
-    // )
-    concat
-    box_put
-    // algokit_contracts/ticket_manager.py:104
-    // @arc4.abimethod()
-    intc_1 // 1
-    return
+// claim_ticket_caster
+claimticketcaster_8:
+proto 0 0
+int 0
+txna ApplicationArgs 1
+btoi
+frame_bury 0
+frame_dig 0
+callsub claimticket_2
+retsub
 
+// check_in_caster
+checkincaster_9:
+proto 0 0
+int 0
+txna ApplicationArgs 1
+btoi
+frame_bury 0
+frame_dig 0
+callsub checkin_3
+retsub
 
-// algokit_contracts.ticket_manager.TicketManager.check_in[routing]() -> void:
-check_in:
-    // algokit_contracts/ticket_manager.py:132
-    // @arc4.abimethod()
-    txna ApplicationArgs 1
-    dup
-    len
-    intc_2 // 8
-    ==
-    assert // invalid number of bytes for arc4.uint64
-    // algokit_contracts/ticket_manager.py:138
-    // asset_id = ticket_id.native
-    btoi
-    // algokit_contracts/ticket_manager.py:139
-    // ticket = self.tickets[asset_id].copy()
-    itob
-    bytec 4 // "tickets"
-    swap
-    concat
-    dup
-    box_get
-    assert // check self.tickets entry exists
-    // algokit_contracts/ticket_manager.py:141-142
-    // # Only organizer can verify
-    // assert Txn.sender == self.organizer.native, "Only organizer"
-    txn Sender
-    intc_0 // 0
-    bytec_3 // "organizer"
-    app_global_get_ex
-    assert // check self.organizer exists
-    ==
-    assert // Only organizer
-    // algokit_contracts/ticket_manager.py:144-145
-    // # Must be in Claimed (1) status
-    // assert ticket.status == arc4.UInt8(1), "Ticket not in claimed state"
-    dup
-    extract 32 1
-    pushbytes 0x01
-    b==
-    assert // Ticket not in claimed state
-    // algokit_contracts/ticket_manager.py:149
-    // owner=ticket.owner,
-    extract 0 32
-    // algokit_contracts/ticket_manager.py:150
-    // status=arc4.UInt8(2),
-    pushbytes 0x02
-    // algokit_contracts/ticket_manager.py:147-151
-    // # Update to Used (2)
-    // self.tickets[asset_id] = TicketInfo(
-    //     owner=ticket.owner,
-    //     status=arc4.UInt8(2),
-    // )
-    concat
-    box_put
-    // algokit_contracts/ticket_manager.py:132
-    // @arc4.abimethod()
-    intc_1 // 1
-    return
+// withdraw_funds_caster
+withdrawfundscaster_10:
+proto 0 0
+int 0
+txna ApplicationArgs 1
+btoi
+frame_bury 0
+frame_dig 0
+callsub withdrawfunds_4
+retsub
 
-
-// algokit_contracts.ticket_manager.TicketManager.withdraw_funds[routing]() -> void:
-withdraw_funds:
-    // algokit_contracts/ticket_manager.py:153
-    // @arc4.abimethod()
-    txna ApplicationArgs 1
-    dup
-    len
-    intc_2 // 8
-    ==
-    assert // invalid number of bytes for arc4.uint64
-    // algokit_contracts/ticket_manager.py:156
-    // assert Txn.sender == self.organizer.native, "Only organizer"
-    txn Sender
-    intc_0 // 0
-    bytec_3 // "organizer"
-    app_global_get_ex
-    assert // check self.organizer exists
-    ==
-    assert // Only organizer
-    // algokit_contracts/ticket_manager.py:158-161
-    // itxn.Payment(
-    //     receiver=Txn.sender,
-    //     amount=amount.native,
-    // ).submit()
-    itxn_begin
-    // algokit_contracts/ticket_manager.py:159
-    // receiver=Txn.sender,
-    txn Sender
-    // algokit_contracts/ticket_manager.py:160
-    // amount=amount.native,
-    swap
-    btoi
-    itxn_field Amount
-    itxn_field Receiver
-    // algokit_contracts/ticket_manager.py:158
-    // itxn.Payment(
-    intc_1 // pay
-    itxn_field TypeEnum
-    intc_0 // 0
-    itxn_field Fee
-    // algokit_contracts/ticket_manager.py:158-161
-    // itxn.Payment(
-    //     receiver=Txn.sender,
-    //     amount=amount.native,
-    // ).submit()
-    itxn_submit
-    // algokit_contracts/ticket_manager.py:153
-    // @arc4.abimethod()
-    intc_1 // 1
-    return
-
-
-// algokit_contracts.ticket_manager.TicketManager.get_event_info[routing]() -> void:
-get_event_info:
-    // algokit_contracts/ticket_manager.py:167
-    // (arc4.UInt64(self.price), arc4.UInt64(self.supply), arc4.UInt64(self.sold))
-    intc_0 // 0
-    bytec_1 // "price"
-    app_global_get_ex
-    assert // check self.price exists
-    itob
-    intc_0 // 0
-    bytec_2 // "supply"
-    app_global_get_ex
-    assert // check self.supply exists
-    itob
-    intc_0 // 0
-    bytec_0 // "sold"
-    app_global_get_ex
-    assert // check self.sold exists
-    itob
-    // algokit_contracts/ticket_manager.py:166-168
-    // return arc4.Tuple(
-    //     (arc4.UInt64(self.price), arc4.UInt64(self.supply), arc4.UInt64(self.sold))
-    // )
-    cover 2
-    concat
-    swap
-    concat
-    // algokit_contracts/ticket_manager.py:163
-    // @arc4.abimethod(readonly=True)
-    bytec 5 // 0x151f7c75
-    swap
-    concat
-    log
-    intc_1 // 1
-    return
+// get_event_info_caster
+geteventinfocaster_11:
+proto 0 0
+byte ""
+callsub geteventinfo_5
+frame_bury 0
+byte 0x151f7c75
+frame_dig 0
+concat
+log
+retsub

@@ -23,23 +23,103 @@ export default function OrganizerDashboard() {
         try { const appAddr = algosdk.getApplicationAddress(parseInt(appId)); const info = await algodClient.accountInformation(appAddr).do(); setContractBalance(info.amount / 1000000); } catch (e) { setContractBalance(null); }
     };
 
+    const decodeBoxValue = (raw: string | Uint8Array): Uint8Array =>
+        typeof raw === 'string' ? new Uint8Array(Uint8Array.from(atob(raw), c => c.charCodeAt(0))) : new Uint8Array(raw);
+
     const checkIn = async () => {
         if (!activeAccount || !appId || !ticketId) { setStatus("Fill all fields"); return; }
+        const ticketIdInput = parseInt(ticketId, 10);
+        if (!Number.isInteger(ticketIdInput) || ticketIdInput < 1) {
+            setStatus("Enter a valid Ticket # (index) or Asset ID from the attendee's QR.");
+            return;
+        }
         setIsLoading(true); setStatus("");
         try {
+            const appID = parseInt(appId);
+            const ticketsPrefix = new TextEncoder().encode("tickets");
+
+            // Resolve input to (ticketIndex, boxValue): accept either ticket index (1,2,3...) or asset ID
+            let resolvedIndex: number;
+            let boxValue: Uint8Array;
+
+            const tryBox = async (index: number): Promise<Uint8Array | null> => {
+                const rawKey = algosdk.encodeUint64(index);
+                const key = new Uint8Array(ticketsPrefix.length + rawKey.length);
+                key.set(ticketsPrefix, 0);
+                key.set(rawKey, ticketsPrefix.length);
+                try {
+                    const boxResp = await algodClient.getApplicationBoxByName(appID, key).do();
+                    return decodeBoxValue(boxResp.value);
+                } catch {
+                    return null;
+                }
+            };
+
+            const boxAtInput = await tryBox(ticketIdInput);
+            if (boxAtInput && boxAtInput.length >= 41) {
+                resolvedIndex = ticketIdInput;
+                boxValue = boxAtInput;
+            } else if (ticketIdInput > 1000) {
+                // Likely an asset ID: find which ticket index has this asset
+                const appInfo = await algodClient.getApplicationByID(appID).do();
+                const gs = appInfo.params['global-state'] || [];
+                const soldKey = btoa('Sold');
+                const soldState = gs.find((s: { key: string }) => s.key === soldKey);
+                const sold = soldState ? soldState.value.uint : 0;
+                let found = false;
+                for (let i = 1; i <= sold; i++) {
+                    const bv = await tryBox(i);
+                    if (bv && bv.length >= 8) {
+                        const assetIdInBox = Number(algosdk.decodeUint64(bv.slice(0, 8), 'safe'));
+                        if (assetIdInBox === ticketIdInput) {
+                            resolvedIndex = i;
+                            boxValue = bv;
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+                if (!found) {
+                    setStatus(`✗ No ticket with Asset ID ${ticketIdInput} for this event. Check Event App ID is correct.`);
+                    return;
+                }
+            } else {
+                setStatus(`✗ No ticket #${ticketIdInput} for this event. You can enter Ticket # (1, 2, 3...) or the Asset ID from the QR.`);
+                return;
+            }
+
+            // Box layout: 8 assetId, 32 owner, 1 status (0=pending, 1=claimed, 2=used)
+            const statusByte = boxValue.length > 40 ? boxValue[40] : 0;
+            if (statusByte === 0) {
+                setStatus("✗ Ticket not claimed yet. Attendee must claim the ticket in My Tickets first.");
+                return;
+            }
+            if (statusByte === 2) {
+                setStatus("✗ Ticket already used (already checked in).");
+                return;
+            }
+
+            const rawKey = algosdk.encodeUint64(resolvedIndex);
+            const boxKey = new Uint8Array(ticketsPrefix.length + rawKey.length);
+            boxKey.set(ticketsPrefix, 0);
+            boxKey.set(rawKey, ticketsPrefix.length);
+
             const contractJson = await fetch('/utils/contracts/ticket_manager_contract.json').then(r => r.json());
             const contract = new algosdk.ABIContract(contractJson);
             const method = contract.getMethodByName('check_in');
             const atc = new algosdk.AtomicTransactionComposer();
-            const ticketsPrefix = new TextEncoder().encode("tickets");
-            const rawKey = algosdk.encodeUint64(parseInt(ticketId));
-            const boxKey = new Uint8Array(ticketsPrefix.length + rawKey.length);
-            boxKey.set(ticketsPrefix, 0);
-            boxKey.set(rawKey, ticketsPrefix.length);
-            atc.addMethodCall({ appID: parseInt(appId), method, methodArgs: [parseInt(ticketId)], boxes: [{ appIndex: 0, name: boxKey }], sender: activeAccount.address, signer: dummySigner, suggestedParams: await algodClient.getTransactionParams().do() });
+            atc.addMethodCall({ appID, method, methodArgs: [resolvedIndex], boxes: [{ appIndex: 0, name: boxKey }], sender: activeAccount.address, signer: dummySigner, suggestedParams: await algodClient.getTransactionParams().do() });
             await executeATC(atc, algodClient, signTransactions);
-            setStatus(`✓ Ticket ${ticketId} verified!`);
-        } catch (error: any) { console.error(error); setStatus(`✗ Failed: ${error.message}`); }
+            setStatus(`✓ Ticket verified! (index ${resolvedIndex})`);
+        } catch (error: any) {
+            console.error(error);
+            const msg = String(error?.message ?? error);
+            if (msg.includes("assert failed") || msg.includes("pc=505") || msg.includes("load 6")) {
+                setStatus("✗ Ticket not found or invalid. Check Event App ID and Ticket # or Asset ID.");
+            } else {
+                setStatus(`✗ Failed: ${msg}`);
+            }
+        }
         finally { setIsLoading(false); }
     };
 
@@ -103,12 +183,14 @@ export default function OrganizerDashboard() {
                         <div className="space-y-2">
                             <label className="text-sm font-bold text-gray-800">Event App ID</label>
                             <input className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#685AFF]/30 focus:border-[#685AFF] transition-all text-sm" value={appId} onChange={(e) => { setAppId(e.target.value); if (activeTab === 'withdraw') fetchContractBalance(); }} placeholder="e.g. 755123456" type="number" />
+                            <p className="text-xs text-gray-500">Use the <strong>event</strong> app ID (from the event page URL), not the Factory ID.</p>
                         </div>
 
                         {activeTab === 'verify' && (
                             <div className="space-y-2">
-                                <label className="text-sm font-bold text-gray-800">Ticket Asset ID</label>
-                                <input className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#685AFF]/30 focus:border-[#685AFF] transition-all text-sm" value={ticketId} onChange={(e) => setTicketId(e.target.value)} placeholder="From attendee's QR code" type="number" />
+                                <label className="text-sm font-bold text-gray-800">Ticket # or Asset ID</label>
+                                <input className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#685AFF]/30 focus:border-[#685AFF] transition-all text-sm" value={ticketId} onChange={(e) => setTicketId(e.target.value)} placeholder="e.g. 1 or 755496986 (from QR)" type="number" min={1} />
+                                <p className="text-xs text-gray-500">From the attendee&apos;s QR: use <code>ticketIndex</code> (1, 2, 3…) or <code>assetId</code> — both work.</p>
                             </div>
                         )}
 

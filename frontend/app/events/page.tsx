@@ -63,8 +63,7 @@ export default function MarketplacePage() {
         try {
             const appInfo = await algodClient.getApplicationByID(factoryAppId).do();
             const globalState = appInfo.params["global-state"];
-            const countKey = btoa("event_count");
-            const countState = globalState?.find((s: any) => s.key === countKey);
+            const countState = globalState?.find((s: any) => s.key === btoa("event_count")) ?? globalState?.find((s: any) => s.key === btoa("EventCount"));
             if (!countState) {
                 setStatus(`Error: This App ID (${factoryAppId}) is not a valid Event Factory.`);
                 return;
@@ -86,10 +85,10 @@ export default function MarketplacePage() {
                     const eventGlobalState = eventAppInfo.params["global-state"];
                     const getGlobalInt = (key: string) => { const k = btoa(key); const s = eventGlobalState?.find((x: any) => x.key === k); return s ? s.value.uint : 0; };
                     const getGlobalBytes = (key: string) => { const k = btoa(key); const s = eventGlobalState?.find((x: any) => x.key === k); return s ? s.value.bytes : ''; };
-                    const price = getGlobalInt("price");
-                    const supply = getGlobalInt("supply");
-                    const sold = getGlobalInt("sold");
-                    const organizerBase64 = getGlobalBytes("organizer");
+                    const price = getGlobalInt("Price");
+                    const supply = getGlobalInt("Supply");
+                    const sold = getGlobalInt("Sold");
+                    const organizerBase64 = getGlobalBytes("Organizer");
                     let organizer = "";
                     if (organizerBase64) { const bin = atob(organizerBase64); const arr = new Uint8Array(bin.length); for (let j = 0; j < bin.length; j++) arr[j] = bin.charCodeAt(j); organizer = algosdk.encodeAddress(arr); }
                     fetchedEvents.push({ appId: Number(id), name, price, supply, sold, organizer });
@@ -106,16 +105,32 @@ export default function MarketplacePage() {
         setBuyingEventId(event.appId);
         setStatus('');
         try {
+            // Re-fetch current Sold and Price from chain to avoid stale data and wrong box key
+            const appInfo = await algodClient.getApplicationByID(event.appId).do();
+            const globalState = appInfo.params['global-state'];
+            let currentSold = 0;
+            let currentPrice = event.price;
+            globalState.forEach((item: any) => {
+                const key = Buffer.from(item.key, 'base64').toString();
+                if (key === 'Sold') currentSold = item.value.uint;
+                if (key === 'Price') currentPrice = item.value.uint;
+            });
+            const supply = event.supply;
+            if (currentSold >= supply) {
+                setStatus('Event is sold out.');
+                return;
+            }
             const contractJson = await fetch('/utils/contracts/ticket_manager_contract.json').then(r => r.json());
             const contract = new algosdk.ABIContract(contractJson);
             const method = contract.getMethodByName('buy_ticket');
             const params = await algodClient.getTransactionParams().do();
             const eventAppAddr = algosdk.getApplicationAddress(event.appId);
-            const payTxn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({ from: activeAccount.address, to: eventAppAddr, amount: event.price, suggestedParams: params });
+            const payTxn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({ from: activeAccount.address, to: eventAppAddr, amount: currentPrice, suggestedParams: params });
             const atc = new algosdk.AtomicTransactionComposer();
             const sp = { ...params, fee: 3000, flatFee: true };
+            // Contract increments Sold first, then writes to "tickets" + newSold
             const ticketsPrefix = new TextEncoder().encode("tickets");
-            const rawKey = algosdk.encodeUint64(event.sold);
+            const rawKey = algosdk.encodeUint64(currentSold + 1);
             const boxKey = new Uint8Array(ticketsPrefix.length + rawKey.length);
             boxKey.set(ticketsPrefix, 0);
             boxKey.set(rawKey, ticketsPrefix.length);

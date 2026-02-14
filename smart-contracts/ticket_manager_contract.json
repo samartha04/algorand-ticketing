@@ -34,7 +34,7 @@
             "args": [
                 {
                     "type": "uint64",
-                    "name": "ticket_id"
+                    "name": "ticket_index"
                 }
             ],
             "returns": {
@@ -46,7 +46,7 @@
             "args": [
                 {
                     "type": "uint64",
-                    "name": "ticket_id"
+                    "name": "ticket_index"
                 }
             ],
             "returns": {
@@ -63,6 +63,13 @@
             ],
             "returns": {
                 "type": "void"
+            }
+        },
+        {
+            "name": "get_event_info",
+            "args": [],
+            "returns": {
+                "type": "(uint64,uint64,uint64)"
             }
         }
     ],

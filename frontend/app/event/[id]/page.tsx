@@ -32,7 +32,7 @@ export default function EventDetailsPage({ params }: { params: { id: string } })
             const globalState = appInfo.params['global-state'];
 
             // Parse State
-            // AlgoKit uses lowercase keys: 'price', 'supply', 'sold', 'organizer'
+            // Smart contract uses capitalized keys: 'Price', 'Supply', 'Sold', 'Organizer'
             const parsedState: any = {};
             globalState.forEach((item: any) => {
                 const key = Buffer.from(item.key, 'base64').toString();
@@ -41,10 +41,10 @@ export default function EventDetailsPage({ params }: { params: { id: string } })
             });
 
             setEventData({
-                price: parsedState['price'], // MicroAlgos
-                supply: parsedState['supply'],
-                sold: parsedState['sold'],
-                organizer: parsedState['organizer'] ? algosdk.encodeAddress(Buffer.from(parsedState['organizer'], 'base64')) : 'Unknown',
+                price: parsedState['Price'], // MicroAlgos
+                supply: parsedState['Supply'],
+                sold: parsedState['Sold'],
+                organizer: parsedState['Organizer'] ? algosdk.encodeAddress(Buffer.from(parsedState['Organizer'], 'base64')) : 'Unknown',
                 appId: appId
             });
         } catch (error) {
@@ -61,6 +61,17 @@ export default function EventDetailsPage({ params }: { params: { id: string } })
         setStatus('Processing purchase...');
 
         try {
+            // 0. Re-fetch the LATEST sold count from the chain to avoid stale box references
+            const appInfo = await algodClient.getApplicationByID(appId).do();
+            const globalState = appInfo.params['global-state'];
+            let currentSold = 0;
+            let currentPrice = eventData.price;
+            globalState.forEach((item: any) => {
+                const key = Buffer.from(item.key, 'base64').toString();
+                if (key === 'Sold') currentSold = item.value.uint;
+                if (key === 'Price') currentPrice = item.value.uint;
+            });
+
             // 1. Prepare Payment Transaction
             const params = await algodClient.getTransactionParams().do();
             const appAddress = algosdk.getApplicationAddress(appId);
@@ -68,7 +79,7 @@ export default function EventDetailsPage({ params }: { params: { id: string } })
             const paymentTxn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
                 from: activeAccount.address,
                 to: appAddress,
-                amount: eventData.price,
+                amount: currentPrice,
                 suggestedParams: params
             });
 
@@ -76,12 +87,13 @@ export default function EventDetailsPage({ params }: { params: { id: string } })
             const contractJson = await fetch('/utils/contracts/ticket_manager_contract.json').then(r => r.json());
             const contract = new algosdk.ABIContract(contractJson);
 
-
-
             const atc = new algosdk.AtomicTransactionComposer();
             const sp = { ...params, fee: 3000, flatFee: true };
+
+            // Build box key: "tickets" + uint64(currentSold + 1)
+            // The contract increments Sold first, then writes to "tickets" + newSold
             const ticketsPrefix = new TextEncoder().encode("tickets");
-            const rawKey = algosdk.encodeUint64(eventData.sold);
+            const rawKey = algosdk.encodeUint64(currentSold + 1);
             const boxKey = new Uint8Array(ticketsPrefix.length + rawKey.length);
             boxKey.set(ticketsPrefix, 0);
             boxKey.set(rawKey, ticketsPrefix.length);

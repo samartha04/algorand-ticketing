@@ -81,10 +81,10 @@ export async function fetchAllEvents(
                     return s ? s.value.bytes : ''; // base64
                 };
 
-                const price = getGlobalInt("price");
-                const supply = getGlobalInt("supply");
-                const sold = getGlobalInt("sold");
-                const organizerBase64 = getGlobalBytes("organizer");
+                const price = getGlobalInt("Price");
+                const supply = getGlobalInt("Supply");
+                const sold = getGlobalInt("Sold");
+                const organizerBase64 = getGlobalBytes("Organizer");
 
                 let organizer = "";
                 if (organizerBase64) {

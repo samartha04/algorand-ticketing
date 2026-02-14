@@ -52,8 +52,7 @@ export default function MyTicketsPage() {
         try {
             const appInfo = await algodClient.getApplicationByID(factoryAppId).do();
             const globalState = appInfo.params["global-state"];
-            const countKey = btoa("event_count");
-            const countState = globalState?.find((s: any) => s.key === countKey);
+            const countState = globalState?.find((s: any) => s.key === btoa("event_count")) ?? globalState?.find((s: any) => s.key === btoa("EventCount"));
             const eventCount = countState ? countState.value.uint : 0;
             const eventMap = new Map<string, { appId: number, name: string }>();
             const eventsPrefix = new TextEncoder().encode("events");
@@ -74,12 +73,13 @@ export default function MyTicketsPage() {
                 try {
                     const appInfo = await algodClient.getApplicationByID(info.appId).do();
                     const globalState = appInfo.params["global-state"];
-                    const soldKey = btoa("sold");
+                    // Contract uses "Sold" (capital S); tickets are stored in boxes 1..sold (1-based)
+                    const soldKey = btoa("Sold");
                     const soldState = globalState?.find((s: any) => s.key === soldKey);
                     const sold = soldState ? soldState.value.uint : 0;
                     const ticketsPrefix = new TextEncoder().encode("tickets");
                     const promises = [];
-                    for (let i = 0; i < sold; i++) {
+                    for (let i = 1; i <= sold; i++) {
                         const rawKey = algosdk.encodeUint64(i);
                         const boxKey = new Uint8Array(ticketsPrefix.length + rawKey.length);
                         boxKey.set(ticketsPrefix, 0);
@@ -122,7 +122,8 @@ export default function MyTicketsPage() {
             const claimBoxKey = new Uint8Array(ticketsPrefix.length + rawKey.length);
             claimBoxKey.set(ticketsPrefix, 0);
             claimBoxKey.set(rawKey, ticketsPrefix.length);
-            atc.addMethodCall({ appID: ticket.appId, method, methodArgs: [ticket.index], boxes: [{ appIndex: 0, name: claimBoxKey }], sender: activeAccount.address, signer: dummySigner, suggestedParams: sp });
+            // Inner axfer: asset must be in foreign assets array; receiver must be in accounts array
+            atc.addMethodCall({ appID: ticket.appId, method, methodArgs: [ticket.index], boxes: [{ appIndex: 0, name: claimBoxKey }], appAccounts: [activeAccount.address], appForeignAssets: [ticket.assetId], sender: activeAccount.address, signer: dummySigner, suggestedParams: sp });
             await executeATC(atc, algodClient, signTransactions);
             setStatus('🎉 Ticket claimed!');
             fetchAll();
@@ -226,9 +227,9 @@ export default function MyTicketsPage() {
                         </div>
                         <h3 className="text-2xl font-extrabold text-gray-900 mb-6">{selectedTicket.eventName}</h3>
                         <div className="p-5 bg-gray-50 rounded-2xl inline-block mb-4">
-                            <QRCodeCanvas value={JSON.stringify({ appId: selectedTicket.appId, assetId: selectedTicket.assetId })} size={200} level={"H"} includeMargin={true} />
-                        </div>
-                        <p className="text-xs text-gray-400 font-mono mb-2">Ticket #{selectedTicket.assetId}</p>
+<QRCodeCanvas value={JSON.stringify({ appId: selectedTicket.appId, assetId: selectedTicket.assetId, ticketIndex: selectedTicket.index })} size={200} level={"H"} includeMargin={true} />
+                                        </div>
+                                        <p className="text-xs text-gray-400 font-mono mb-2">Ticket #{selectedTicket.index} (use this number for check-in)</p>
                         <p className="text-xs text-gray-400 pt-3 border-t border-gray-100">Present this QR code at the entrance for verification</p>
                     </div>
                 </div>

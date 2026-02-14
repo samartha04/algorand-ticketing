@@ -1,10 +1,8 @@
 {
     "name": "TicketManager",
-    "desc": "Manages event tickets as on-chain NFTs (ASAs). Each ticket is a unique ASA minted by the contract. Ticket metadata is stored in boxes keyed by asset ID.",
     "methods": [
         {
             "name": "create_event",
-            "desc": "Initialize event with price (microAlgos) and ticket supply. Only creator can call.",
             "args": [
                 {
                     "type": "uint64",
@@ -21,7 +19,6 @@
         },
         {
             "name": "buy_ticket",
-            "desc": "Purchase a ticket. Requires a payment transaction for the ticket price. Mints a unique NFT and stores buyer info in a box. Returns the minted asset ID.",
             "args": [
                 {
                     "type": "pay",
@@ -29,16 +26,15 @@
                 }
             ],
             "returns": {
-                "type": "uint64"
+                "type": "void"
             }
         },
         {
             "name": "claim_ticket",
-            "desc": "Claim a purchased ticket. Transfers the NFT to the buyer. Buyer must opt-in to the ASA before calling this.",
             "args": [
                 {
                     "type": "uint64",
-                    "name": "ticket_id"
+                    "name": "ticket_index"
                 }
             ],
             "returns": {
@@ -47,11 +43,10 @@
         },
         {
             "name": "check_in",
-            "desc": "Mark a ticket as used (check-in at the venue). Only the organizer can call this.",
             "args": [
                 {
                     "type": "uint64",
-                    "name": "ticket_id"
+                    "name": "ticket_index"
                 }
             ],
             "returns": {
@@ -60,7 +55,6 @@
         },
         {
             "name": "withdraw_funds",
-            "desc": "Withdraw revenue from ticket sales. Only organizer can call.",
             "args": [
                 {
                     "type": "uint64",
@@ -73,11 +67,11 @@
         },
         {
             "name": "get_event_info",
-            "desc": "Read-only: returns (price, supply, sold).",
             "args": [],
             "returns": {
                 "type": "(uint64,uint64,uint64)"
             }
         }
-    ]
+    ],
+    "networks": {}
 }
