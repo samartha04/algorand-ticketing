@@ -14,6 +14,9 @@ interface EventInfo {
     supply: number;
     sold: number;
     organizer: string;
+    date?: string;
+    day?: string;
+    location?: string;
 }
 
 // Skeleton loader
@@ -57,6 +60,16 @@ export default function MarketplacePage() {
 
     const algodClient = new algosdk.Algodv2('', 'https://testnet-api.algonode.cloud', 443);
 
+    const getEventMetadata = (appId: number) => {
+        try {
+            const metadata = JSON.parse(localStorage.getItem('eventMetadata') || '{}');
+            return metadata[appId] || {};
+        } catch (e) {
+            console.error('Failed to retrieve event metadata:', e);
+            return {};
+        }
+    };
+
     const fetchEvents = async () => {
         if (factoryAppId === 0) { setStatus("Enter a Factory ID to discover events"); return; }
         setIsLoading(true);
@@ -93,7 +106,8 @@ export default function MarketplacePage() {
                     const organizerBase64 = getGlobalBytes("Organizer");
                     let organizer = "";
                     if (organizerBase64) { const bin = atob(organizerBase64); const arr = new Uint8Array(bin.length); for (let j = 0; j < bin.length; j++) arr[j] = bin.charCodeAt(j); organizer = algosdk.encodeAddress(arr); }
-                    fetchedEvents.push({ appId: Number(id), name, price, supply, sold, organizer });
+                    const metadata = getEventMetadata(Number(id));
+                    fetchedEvents.push({ appId: Number(id), name, price, supply, sold, organizer, date: metadata.date, day: metadata.day, location: metadata.location });
                 } catch (e) { console.error(`Error fetching event ${i}`, e); }
             }
             setEvents(fetchedEvents);
@@ -238,12 +252,36 @@ export default function MarketplacePage() {
 
                                         {/* Content */}
                                         <div className="p-5">
-                                            <h3 className="text-lg font-bold text-gray-900 mb-1 group-hover:text-[#685AFF] transition-colors">
+                                            <h3 className="text-lg font-bold text-gray-900 mb-2 group-hover:text-[#685AFF] transition-colors">
                                                 {event.name}
                                             </h3>
-                                            <p className="text-xs text-gray-400 font-mono mb-4">
+                                            <p className="text-xs text-gray-400 font-mono mb-3">
                                                 App ID: {event.appId}
                                             </p>
+
+                                            {/* Date, Day, Location */}
+                                            {(event.date || event.day || event.location) && (
+                                                <div className="bg-gray-50 rounded-lg p-2.5 mb-4 space-y-1.5">
+                                                    {event.date && (
+                                                        <div className="flex items-center gap-2 text-xs">
+                                                            <svg className="w-3.5 h-3.5 text-[#685AFF]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10m7 8H3a2 2 0 01-2-2V7a2 2 0 012-2h16a2 2 0 012 2v12a2 2 0 01-2 2z" /></svg>
+                                                            <span className="text-gray-700 font-medium">{event.date}</span>
+                                                        </div>
+                                                    )}
+                                                    {event.day && (
+                                                        <div className="flex items-center gap-2 text-xs">
+                                                            <svg className="w-3.5 h-3.5 text-[#685AFF]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                                            <span className="text-gray-700 font-medium">{event.day}</span>
+                                                        </div>
+                                                    )}
+                                                    {event.location && (
+                                                        <div className="flex items-center gap-2 text-xs">
+                                                            <svg className="w-3.5 h-3.5 text-[#685AFF]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                                                            <span className="text-gray-700 font-medium">{event.location}</span>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
 
                                             {/* Price */}
                                             <div className="flex justify-between items-center mb-4">

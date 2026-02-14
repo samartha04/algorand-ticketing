@@ -41,8 +41,8 @@ export default function OrganizerDashboard() {
             const ticketsPrefix = new TextEncoder().encode("tickets");
 
             // Resolve input to (ticketIndex, boxValue): accept either ticket index (1,2,3...) or asset ID
-            let resolvedIndex: number;
-            let boxValue: Uint8Array;
+            let resolvedIndex: number | null = null;
+            let boxValue: Uint8Array | null = null;
 
             const tryBox = async (index: number): Promise<Uint8Array | null> => {
                 const rawKey = algosdk.encodeUint64(index);
@@ -90,6 +90,8 @@ export default function OrganizerDashboard() {
                 return;
             }
 
+            // Ensure we resolved an index and have box data
+            if (resolvedIndex === null || !boxValue) { setStatus("✗ No ticket data found for that input."); return; }
             // Box layout: 8 assetId, 32 owner, 1 status (0=pending, 1=claimed, 2=used)
             const statusByte = boxValue.length > 40 ? boxValue[40] : 0;
             if (statusByte === 0) {

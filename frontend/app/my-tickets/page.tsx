@@ -7,6 +7,7 @@ import algosdk from 'algosdk';
 import { QRCodeCanvas } from 'qrcode.react';
 import { executeATC, dummySigner } from '@/utils/signer';
 import { useTxStatus } from '@/components/TxStatus';
+import TxConfirm from '@/components/TxConfirm';
 
 interface Ticket {
     assetId: number;
@@ -107,34 +108,22 @@ export default function MyTicketsPage() {
             setTickets(myTickets);
             if (myTickets.length === 0) setStatus('No tickets found');
         } catch (e: any) { console.error(e); setStatus(`Error: ${e.message}`); }
-        setConfirmData({ amount: 0, fee: 0.002 + 0.001, reserve: 0.1 });
-        setConfirmOpen(true);
         finally { setIsLoading(false); }
     };
-
     const claimTicket = async (ticket: Ticket) => {
         if (!activeAccount) return;
-        setClaimingId(ticket.assetId);
-        try {
-            const contractJson = await fetch('/utils/contracts/ticket_manager_contract.json').then(r => r.json());
-            const contract = new algosdk.ABIContract(contractJson);
-            const method = contract.getMethodByName('claim_ticket');
-            const atc = new algosdk.AtomicTransactionComposer();
-            const optInTxn = algosdk.makeAssetTransferTxnWithSuggestedParamsFromObject({ from: activeAccount.address, to: activeAccount.address, assetIndex: ticket.assetId, amount: 0, suggestedParams: await algodClient.getTransactionParams().do() });
-            atc.addTransaction({ txn: optInTxn, signer: dummySigner });
-            const sp = await algodClient.getTransactionParams().do(); sp.fee = 2000; sp.flatFee = true;
-            const ticketsPrefix = new TextEncoder().encode("tickets");
-            const rawKey = algosdk.encodeUint64(ticket.index);
-            const claimBoxKey = new Uint8Array(ticketsPrefix.length + rawKey.length);
-            claimBoxKey.set(ticketsPrefix, 0);
-            claimBoxKey.set(rawKey, ticketsPrefix.length);
-            // Inner axfer: asset must be in foreign assets array; receiver must be in accounts array
-            atc.addMethodCall({ appID: ticket.appId, method, methodArgs: [ticket.index], boxes: [{ appIndex: 0, name: claimBoxKey }], appAccounts: [activeAccount.address], appForeignAssets: [ticket.assetId], sender: activeAccount.address, signer: dummySigner, suggestedParams: sp });
-            await executeATC(atc, algodClient, signTransactions, 4, (s) => {
-                if (s.state === 'pending') setTxStatus({ state: 'pending', message: s.message, txId: s.txId, explorerUrl: s.explorerUrl });
+        // show confirmation: opt-in will lock ~0.1 ALGO + fees
+        setConfirmData({ amount: 0, fee: 0.002 + 0.001, reserve: 0.1 });
+        setConfirmOpen(true);
+        // store ticket in temp to act on after confirmation
+        (window as any).__pendingClaimTicket = ticket;
+        return;
+    };
+
     const claimTicketConfirmed = async (ticket?: Ticket) => {
         const t = ticket || (window as any).__pendingClaimTicket as Ticket;
         if (!t) return;
+        if (!activeAccount) { setStatus('Connect wallet and try again'); setConfirmOpen(false); delete (window as any).__pendingClaimTicket; return; }
         setClaimingId(t.assetId);
         try {
             const contractJson = await fetch('/utils/contracts/ticket_manager_contract.json').then(r => r.json());
@@ -151,18 +140,15 @@ export default function MyTicketsPage() {
             claimBoxKey.set(rawKey, ticketsPrefix.length);
             // Inner axfer: asset must be in foreign assets array; receiver must be in accounts array
             atc.addMethodCall({ appID: t.appId, method, methodArgs: [t.index], boxes: [{ appIndex: 0, name: claimBoxKey }], appAccounts: [activeAccount.address], appForeignAssets: [t.assetId], sender: activeAccount.address, signer: dummySigner, suggestedParams: sp });
-            await executeATC(atc, algodClient, signTransactions);
-            setStatus('🎉 Ticket claimed!');
-            fetchAll();
-        } catch (e: any) { console.error(e); setStatus(`Claim failed: ${e.message}`); }
-        finally { setClaimingId(null); delete (window as any).__pendingClaimTicket; setConfirmOpen(false); }
+            await executeATC(atc, algodClient, signTransactions, 4, (s) => {
+                if (s.state === 'pending') setTxStatus({ state: 'pending', message: s.message, txId: s.txId, explorerUrl: s.explorerUrl });
                 if (s.state === 'success') setTxStatus({ state: 'success', message: s.message, txId: s.txId, explorerUrl: s.explorerUrl });
                 if (s.state === 'failed') setTxStatus({ state: 'failed', message: s.message });
             });
             setStatus('🎉 Ticket claimed!');
             fetchAll();
         } catch (e: any) { console.error(e); setStatus(`Claim failed: ${e.message}`); }
-        finally { setClaimingId(null); }
+        finally { setClaimingId(null); delete (window as any).__pendingClaimTicket; setConfirmOpen(false); }
     };
 
     return (
