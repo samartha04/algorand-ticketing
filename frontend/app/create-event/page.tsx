@@ -80,6 +80,25 @@ export default function CreateEventPage() {
         }
     };
 
+    const saveDeployedEvent = (eventId: number, factoryId: number) => {
+        try {
+            const deployedEvent = {
+                eventId,
+                factoryId,
+                eventName,
+                date: eventDate,
+                day: eventDay,
+                location: eventLocation,
+                timestamp: Date.now()
+            };
+            const existing = JSON.parse(localStorage.getItem('deployedEvents') || '[]');
+            existing.unshift(deployedEvent);
+            localStorage.setItem('deployedEvents', JSON.stringify(existing));
+        } catch (e) {
+            console.error('Failed to save deployed event:', e);
+        }
+    };
+
     const deployFactory = async () => {
         if (!activeAccount) return;
         setIsLoading(true); setStatus('Deploying Event Factory...');
@@ -190,10 +209,12 @@ export default function CreateEventPage() {
                 });
                 setCurrentStep(3);
                 storeEventMetadata(appId);
+                saveDeployedEvent(appId, factoryAppId);
                 setStatus(`✓ Event created & registered! Ready to go.`);
             } else {
                 setCurrentStep(3);
                 storeEventMetadata(appId);
+                saveDeployedEvent(appId, factoryAppId);
                 setStatus(`✓ Event created! (Not registered - No Factory ID found. Did you refresh?)`);
             }
         } catch (error: any) { console.error(error); setStatus(`Error: ${error.message}`); }

@@ -10,6 +10,7 @@ const navItems = [
     { name: 'Home', href: '/' },
     { name: 'Marketplace', href: '/events' },
     { name: 'Create Event', href: '/create-event' },
+    { name: 'My Events', href: '/my-events' },
     { name: 'My Tickets', href: '/my-tickets' },
     { name: 'Dashboard', href: '/verify' },
 ];
