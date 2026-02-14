@@ -9,7 +9,8 @@ export async function executeATC(
     atc: algosdk.AtomicTransactionComposer,
     algodClient: algosdk.Algodv2,
     signTransactions: (txns: Uint8Array[], indexesToSign?: number[], returnGroup?: boolean) => Promise<Uint8Array[]>,
-    waitRounds: number = 4
+    waitRounds: number = 4,
+    onStatus?: (s: { state: 'pending' | 'success' | 'failed'; message?: string; txId?: string; explorerUrl?: string }) => void
 ): Promise<{ txIDs: string[], confirmedRound: number }> {
     // 1. Build the transaction group
     const txnGroup = atc.buildGroup();
@@ -26,6 +27,7 @@ export async function executeATC(
 
     // 3. Sign using use-wallet
     // pass returnGroup=true to keep the sequence intact
+    if (onStatus) onStatus({ state: 'pending', message: 'Waiting for wallet signature...' });
     const signedTxns = await signTransactions(encoded, indexesToSign, true);
 
     // 4. Validate and Filter
@@ -41,15 +43,24 @@ export async function executeATC(
         throw new Error('No valid signed transactions returned');
     }
 
-    // 5. Send to Network
-    const { txId } = await algodClient.sendRawTransaction(validTxns).do();
+    try {
+        // 5. Send to Network
+        const { txId } = await algodClient.sendRawTransaction(validTxns).do();
 
-    // 6. Wait for confirmation
-    const result = await algosdk.waitForConfirmation(algodClient, txId, waitRounds);
-    const confirmedRound = result['confirmed-round'] || 0;
-    const txIDs = txns.map(txn => txn.txID());
+        if (onStatus) onStatus({ state: 'pending', message: 'Transaction broadcasted to network', txId, explorerUrl: `https://testnet.algoexplorer.io/tx/${txId}` });
 
-    return { txIDs, confirmedRound };
+        // 6. Wait for confirmation
+        const result = await algosdk.waitForConfirmation(algodClient, txId, waitRounds);
+        const confirmedRound = result['confirmed-round'] || 0;
+        const txIDs = txns.map(txn => txn.txID());
+
+        if (onStatus) onStatus({ state: 'success', message: 'Transaction confirmed', txId, explorerUrl: `https://testnet.algoexplorer.io/tx/${txId}` });
+
+        return { txIDs, confirmedRound };
+    } catch (err: any) {
+        if (onStatus) onStatus({ state: 'failed', message: err?.message || 'Transaction failed' });
+        throw err;
+    }
 }
 
 /**

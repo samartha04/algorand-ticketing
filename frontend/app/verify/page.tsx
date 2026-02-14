@@ -5,9 +5,11 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import algosdk from 'algosdk';
 import { executeATC, dummySigner } from '@/utils/signer';
+import { useTxStatus } from '@/components/TxStatus';
 
 export default function OrganizerDashboard() {
     const { activeAccount, signTransactions } = useWallet();
+    const { setStatus: setTxStatus } = useTxStatus();
     const [appId, setAppId] = useState('');
     const [ticketId, setTicketId] = useState('');
     const [withdrawAmount, setWithdrawAmount] = useState('');
@@ -109,7 +111,11 @@ export default function OrganizerDashboard() {
             const method = contract.getMethodByName('check_in');
             const atc = new algosdk.AtomicTransactionComposer();
             atc.addMethodCall({ appID, method, methodArgs: [resolvedIndex], boxes: [{ appIndex: 0, name: boxKey }], sender: activeAccount.address, signer: dummySigner, suggestedParams: await algodClient.getTransactionParams().do() });
-            await executeATC(atc, algodClient, signTransactions);
+            await executeATC(atc, algodClient, signTransactions, 4, (s) => {
+                if (s.state === 'pending') setTxStatus({ state: 'pending', message: s.message, txId: s.txId, explorerUrl: s.explorerUrl });
+                if (s.state === 'success') setTxStatus({ state: 'success', message: s.message, txId: s.txId, explorerUrl: s.explorerUrl });
+                if (s.state === 'failed') setTxStatus({ state: 'failed', message: s.message });
+            });
             setStatus(`✓ Ticket verified! (index ${resolvedIndex})`);
         } catch (error: any) {
             console.error(error);
@@ -134,7 +140,11 @@ export default function OrganizerDashboard() {
             const atc = new algosdk.AtomicTransactionComposer();
             const sp = await algodClient.getTransactionParams().do(); sp.fee = 2000; sp.flatFee = true;
             atc.addMethodCall({ appID: parseInt(appId), method, methodArgs: [amountMicro], sender: activeAccount.address, signer: dummySigner, suggestedParams: sp });
-            await executeATC(atc, algodClient, signTransactions);
+            await executeATC(atc, algodClient, signTransactions, 4, (s) => {
+                if (s.state === 'pending') setTxStatus({ state: 'pending', message: s.message, txId: s.txId, explorerUrl: s.explorerUrl });
+                if (s.state === 'success') setTxStatus({ state: 'success', message: s.message, txId: s.txId, explorerUrl: s.explorerUrl });
+                if (s.state === 'failed') setTxStatus({ state: 'failed', message: s.message });
+            });
             setStatus(`✓ Withdrew ${withdrawAmount} ALGO!`);
             fetchContractBalance();
         } catch (error: any) { console.error(error); setStatus(`✗ Failed: ${error.message}`); }

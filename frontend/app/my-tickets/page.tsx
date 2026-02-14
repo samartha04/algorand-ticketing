@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import algosdk from 'algosdk';
 import { QRCodeCanvas } from 'qrcode.react';
 import { executeATC, dummySigner } from '@/utils/signer';
+import { useTxStatus } from '@/components/TxStatus';
 
 interface Ticket {
     assetId: number;
@@ -36,6 +37,7 @@ const statusConfig = {
 
 export default function MyTicketsPage() {
     const { activeAccount, signTransactions } = useWallet();
+    const { setStatus: setTxStatus } = useTxStatus();
     const [factoryAppId, setFactoryAppId] = useState<number>(0);
     const [tickets, setTickets] = useState<Ticket[]>([]);
     const [isLoading, setIsLoading] = useState(false);
@@ -124,7 +126,11 @@ export default function MyTicketsPage() {
             claimBoxKey.set(rawKey, ticketsPrefix.length);
             // Inner axfer: asset must be in foreign assets array; receiver must be in accounts array
             atc.addMethodCall({ appID: ticket.appId, method, methodArgs: [ticket.index], boxes: [{ appIndex: 0, name: claimBoxKey }], appAccounts: [activeAccount.address], appForeignAssets: [ticket.assetId], sender: activeAccount.address, signer: dummySigner, suggestedParams: sp });
-            await executeATC(atc, algodClient, signTransactions);
+            await executeATC(atc, algodClient, signTransactions, 4, (s) => {
+                if (s.state === 'pending') setTxStatus({ state: 'pending', message: s.message, txId: s.txId, explorerUrl: s.explorerUrl });
+                if (s.state === 'success') setTxStatus({ state: 'success', message: s.message, txId: s.txId, explorerUrl: s.explorerUrl });
+                if (s.state === 'failed') setTxStatus({ state: 'failed', message: s.message });
+            });
             setStatus('🎉 Ticket claimed!');
             fetchAll();
         } catch (e: any) { console.error(e); setStatus(`Claim failed: ${e.message}`); }

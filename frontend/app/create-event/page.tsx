@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import algosdk from 'algosdk';
 import { executeATC, dummySigner } from '@/utils/signer';
+import { useTxStatus } from '@/components/TxStatus';
 
 // Step indicator
 function StepIndicator({ steps, currentStep }: { steps: string[], currentStep: number }) {
@@ -40,6 +41,7 @@ function StepIndicator({ steps, currentStep }: { steps: string[], currentStep: n
 
 export default function CreateEventPage() {
     const { activeAccount, signTransactions } = useWallet();
+    const { setStatus: setTxStatus } = useTxStatus();
     const [eventName, setEventName] = useState('');
     const [price, setPrice] = useState('1');
     const [supply, setSupply] = useState('100');
@@ -114,7 +116,11 @@ export default function CreateEventPage() {
             });
             atc.addTransaction({ txn: fundTxn, signer: dummySigner });
             atc.addMethodCall({ appID: appId, method, methodArgs: [priceInMicroAlgos, parseInt(supply)], sender: activeAccount.address, signer: dummySigner, suggestedParams: initParams });
-            await executeATC(atc, algodClient, signTransactions);
+            await executeATC(atc, algodClient, signTransactions, 4, (s) => {
+                if (s.state === 'pending') setTxStatus({ state: 'pending', message: s.message, txId: s.txId, explorerUrl: s.explorerUrl });
+                if (s.state === 'success') setTxStatus({ state: 'success', message: s.message, txId: s.txId, explorerUrl: s.explorerUrl });
+                if (s.state === 'failed') setTxStatus({ state: 'failed', message: s.message });
+            });
             setCurrentStep(2);
 
             if (factoryAppId !== 0) {
@@ -150,7 +156,11 @@ export default function CreateEventPage() {
                     suggestedParams: { ...factoryParams, fee: 2000, flatFee: true },
                 });
                 atcFactory.addTransaction({ txn: registerTxn, signer: dummySigner });
-                await executeATC(atcFactory, algodClient, signTransactions);
+                await executeATC(atcFactory, algodClient, signTransactions, 4, (s) => {
+                    if (s.state === 'pending') setTxStatus({ state: 'pending', message: s.message, txId: s.txId, explorerUrl: s.explorerUrl });
+                    if (s.state === 'success') setTxStatus({ state: 'success', message: s.message, txId: s.txId, explorerUrl: s.explorerUrl });
+                    if (s.state === 'failed') setTxStatus({ state: 'failed', message: s.message });
+                });
                 setCurrentStep(3);
                 setStatus(`🎉 Event created & registered! Event ID: ${appId} | Factory ID: ${factoryAppId}`);
             } else {

@@ -6,10 +6,12 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import algosdk from 'algosdk';
 import { executeATC, dummySigner } from '@/utils/signer';
+import { useTxStatus } from '@/components/TxStatus';
 
 export default function EventDetailsPage({ params }: { params: { id: string } }) {
     const appId = parseInt(params.id);
     const { activeAccount, signTransactions } = useWallet();
+    const { setStatus: setTxStatus } = useTxStatus();
 
     // Event State
     const [eventData, setEventData] = useState<any>(null);
@@ -111,7 +113,11 @@ export default function EventDetailsPage({ params }: { params: { id: string } })
             });
 
             // Execute
-            await executeATC(atc, algodClient, signTransactions);
+            await executeATC(atc, algodClient, signTransactions, 4, (s) => {
+                if (s.state === 'pending') setTxStatus({ state: 'pending', message: s.message, txId: s.txId, explorerUrl: s.explorerUrl });
+                if (s.state === 'success') setTxStatus({ state: 'success', message: s.message, txId: s.txId, explorerUrl: s.explorerUrl });
+                if (s.state === 'failed') setTxStatus({ state: 'failed', message: s.message });
+            });
 
             setStatus('Purchase Successful! You can now claim your ticket.');
             // Ideally refresh global state

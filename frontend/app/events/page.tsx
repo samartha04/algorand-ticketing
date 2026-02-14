@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import algosdk from 'algosdk';
 import { executeATC, dummySigner } from '@/utils/signer';
+import { useTxStatus } from '@/components/TxStatus';
 
 interface EventInfo {
     appId: number;
@@ -47,6 +48,7 @@ function getEventGradient(name: string) {
 
 export default function MarketplacePage() {
     const { activeAccount, signTransactions } = useWallet();
+    const { setStatus: setTxStatus } = useTxStatus();
     const [events, setEvents] = useState<EventInfo[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [status, setStatus] = useState('');
@@ -135,7 +137,11 @@ export default function MarketplacePage() {
             boxKey.set(ticketsPrefix, 0);
             boxKey.set(rawKey, ticketsPrefix.length);
             atc.addMethodCall({ appID: event.appId, method, methodArgs: [{ txn: payTxn, signer: dummySigner }], boxes: [{ appIndex: 0, name: boxKey }], sender: activeAccount.address, signer: dummySigner, suggestedParams: sp });
-            await executeATC(atc, algodClient, signTransactions);
+            await executeATC(atc, algodClient, signTransactions, 4, (s) => {
+                if (s.state === 'pending') setTxStatus({ state: 'pending', message: s.message, txId: s.txId, explorerUrl: s.explorerUrl });
+                if (s.state === 'success') setTxStatus({ state: 'success', message: s.message, txId: s.txId, explorerUrl: s.explorerUrl });
+                if (s.state === 'failed') setTxStatus({ state: 'failed', message: s.message });
+            });
             setStatus(`🎉 Ticket purchased for "${event.name}"! Check My Tickets to claim.`);
             fetchEvents();
         } catch (e: any) { console.error(e); setStatus(`Purchase failed: ${e.message}`); }
