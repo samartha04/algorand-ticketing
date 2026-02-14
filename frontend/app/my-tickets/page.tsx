@@ -47,9 +47,18 @@ export default function MyTicketsPage() {
     const [status, setStatus] = useState('');
     const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
     const [claimingId, setClaimingId] = useState<number | null>(null);
+    const [copiedTicketId, setCopiedTicketId] = useState(false);
 
     const indexerClient = new algosdk.Indexer('', 'https://testnet-idx.algonode.cloud', 443);
     const algodClient = new algosdk.Algodv2('', 'https://testnet-api.algonode.cloud', 443);
+
+    const copyTicketId = () => {
+        if (selectedTicket) {
+            navigator.clipboard.writeText(selectedTicket.index.toString());
+            setCopiedTicketId(true);
+            setTimeout(() => setCopiedTicketId(false), 2000);
+        }
+    };
 
     const fetchAll = async () => {
         if (!activeAccount || factoryAppId === 0) { setStatus('Connect wallet and enter Factory ID'); return; }
@@ -247,10 +256,25 @@ export default function MyTicketsPage() {
                             <span className="w-1.5 h-1.5 bg-green-500 rounded-full" /> Entry Pass
                         </div>
                         <h3 className="text-2xl font-extrabold text-gray-900 mb-6">{selectedTicket.eventName}</h3>
-                        <div className="p-5 bg-gray-50 rounded-2xl inline-block mb-4">
-<QRCodeCanvas value={JSON.stringify({ appId: selectedTicket.appId, assetId: selectedTicket.assetId, ticketIndex: selectedTicket.index })} size={200} level={"H"} includeMargin={true} />
-                                        </div>
-                                        <p className="text-xs text-gray-400 font-mono mb-2">Ticket #{selectedTicket.index} (use this number for check-in)</p>
+                        <div className="p-5 bg-gray-50 rounded-2xl inline-block mb-6">
+                            <QRCodeCanvas value={JSON.stringify({ appId: selectedTicket.appId, assetId: selectedTicket.assetId, ticketIndex: selectedTicket.index })} size={200} level={"H"} includeMargin={true} />
+                        </div>
+                        
+                        {/* Ticket ID Section */}
+                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                            <div className="text-xs font-semibold text-gray-600 uppercase tracking-wide mb-2">Your Ticket ID</div>
+                            <div className="flex items-center justify-between gap-3">
+                                <div className="text-3xl font-extrabold text-blue-600">{selectedTicket.index}</div>
+                                <button 
+                                    onClick={copyTicketId}
+                                    className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium text-sm transition-all whitespace-nowrap"
+                                >
+                                    {copiedTicketId ? '✓ Copied' : 'Copy'}
+                                </button>
+                            </div>
+                            <p className="text-xs text-blue-600 mt-3">Use this number for check-in at the entrance</p>
+                        </div>
+                        
                         <p className="text-xs text-gray-400 pt-3 border-t border-gray-100">Present this QR code at the entrance for verification</p>
                     </div>
                 </div>
