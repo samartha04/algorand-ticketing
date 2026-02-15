@@ -12,7 +12,8 @@ const navItems = [
     { name: 'Create Event', href: '/create-event' },
     { name: 'My Events', href: '/my-events' },
     { name: 'My Tickets', href: '/my-tickets' },
-    { name: 'Dashboard', href: '/verify' },
+    { name: 'Dashboard', href: '/dashboard' },
+    { name: 'Verify', href: '/verify' },
 ];
 
 export default function Header() {

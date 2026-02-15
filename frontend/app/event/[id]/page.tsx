@@ -22,6 +22,10 @@ export default function EventDetailsPage({ params }: { params: { id: string } })
     const [confirmOpen, setConfirmOpen] = useState(false);
     const [confirmData, setConfirmData] = useState<{ amount?: number; fee?: number; reserve?: number; } | null>(null);
 
+    // Resale State
+    const [resaleTickets, setResaleTickets] = useState<any[]>([]);
+    const [isBuyingResale, setIsBuyingResale] = useState<number | null>(null); // Ticket Index being bought
+
     // Algod Client
     const algodClient = new algosdk.Algodv2('', 'https://testnet-api.algonode.cloud', 443);
 
@@ -38,8 +42,63 @@ export default function EventDetailsPage({ params }: { params: { id: string } })
     useEffect(() => {
         if (appId) {
             fetchEventDetails();
+            fetchResaleTickets();
         }
     }, [appId]);
+
+    const fetchResaleTickets = async () => {
+        try {
+            const boxesResponse = await algodClient.getApplicationBoxes(appId).do();
+            const promises = boxesResponse.boxes.map((boxDesc: any) =>
+                algodClient.getApplicationBoxByName(appId, boxDesc.name).do()
+                    .then(box => ({ name: boxDesc.name, box }))
+                    .catch(() => null)
+            );
+            const results = await Promise.all(promises);
+            const listed: any[] = [];
+
+            for (const res of results) {
+                if (!res) continue;
+                let { name, box } = res;
+                // Decode Name safely
+                let nameBytes = name;
+                if (typeof name === 'string') {
+                    const bin = atob(name);
+                    nameBytes = new Uint8Array(bin.length);
+                    for (let k = 0; k < bin.length; k++) nameBytes[k] = bin.charCodeAt(k);
+                }
+
+                // Check if Ticket Box (value >= 49 for Resale support)
+                if (box.value.length < 49) continue;
+
+                // Extract Index if possible (Prefix "tickets")
+                // Box Name: "tickets" (7) + uint64 (8) = 15 bytes
+                let ticketIndex = 0;
+                if (nameBytes.length === 15) {
+                    const prefix = new TextDecoder().decode(nameBytes.slice(0, 7));
+                    if (prefix === "tickets") {
+                        ticketIndex = Number(algosdk.decodeUint64(nameBytes.slice(7), 'safe'));
+                    } else continue;
+                } else continue; // Only support new ticket boxes
+
+                // Parse Value
+                // [AssetID 8][Owner 32][Status 1][Price 8]
+                const status = box.value[40];
+                if (status === 3) { // Listed
+                    const price = algosdk.decodeUint64(box.value.slice(41, 49), 'safe');
+                    const owner = algosdk.encodeAddress(box.value.slice(8, 40));
+                    listed.push({
+                        index: ticketIndex,
+                        price: Number(price),
+                        owner: owner
+                    });
+                }
+            }
+            setResaleTickets(listed);
+        } catch (e) {
+            console.error('Error fetching resale tickets:', e);
+        }
+    };
 
     const fetchEventDetails = async () => {
         try {
@@ -124,7 +183,7 @@ export default function EventDetailsPage({ params }: { params: { id: string } })
             const sp = { ...params, fee: 3000, flatFee: true };
 
             const ticketsPrefix = new TextEncoder().encode("tickets");
-            const rawKey = algosdk.encodeUint64(currentSold + 1);
+            const rawKey = algosdk.encodeUint64(currentSold);
             const boxKey = new Uint8Array(ticketsPrefix.length + rawKey.length);
             boxKey.set(ticketsPrefix, 0);
             boxKey.set(rawKey, ticketsPrefix.length);
@@ -157,12 +216,78 @@ export default function EventDetailsPage({ params }: { params: { id: string } })
         }
     };
 
+    const buyResaleTicket = async (ticket: any) => {
+        if (!activeAccount) { setStatus('Connect wallet to buy resale ticket'); return; }
+        setIsBuyingResale(ticket.index);
+        setStatus(`Buying Ticket #${ticket.index}...`);
+
+        try {
+            const params = await algodClient.getTransactionParams().do();
+            const appAddress = algosdk.getApplicationAddress(appId);
+
+            // 1. Payment to App (Price)
+            const paymentTxn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
+                from: activeAccount.address,
+                to: appAddress,
+                amount: ticket.price,
+                suggestedParams: params
+            });
+
+            // 2. Method Call: buy_resale_ticket
+            const contractJson = await fetch('/utils/contracts/ticket_manager_contract.json').then(r => r.json());
+            const contract = new algosdk.ABIContract(contractJson);
+
+            const atc = new algosdk.AtomicTransactionComposer();
+            // Flat fee for Inner Txns (Clawback + Pay) = 2 * 1000 = 2000? 
+            // Outer txn fee + Inner txn fees. 
+            // Buy Resale does 2 inner txns (AssetTransfer + Payment).
+            // So we need to cover 2000 microAlgo extra.
+            // Total fee = 3000 (1000 outer + 2000 inner)
+            const sp = { ...params, fee: 3000, flatFee: true };
+
+            const ticketsPrefix = new TextEncoder().encode("tickets");
+            const rawKey = algosdk.encodeUint64(ticket.index);
+            const boxKey = new Uint8Array(ticketsPrefix.length + rawKey.length);
+            boxKey.set(ticketsPrefix, 0);
+            boxKey.set(rawKey, ticketsPrefix.length);
+
+            atc.addMethodCall({
+                appID: appId,
+                method: contract.getMethodByName('buy_resale_ticket'),
+                methodArgs: [
+                    ticket.index,
+                    { txn: paymentTxn, signer: dummySigner }
+                ],
+                boxes: [{ appIndex: 0, name: boxKey }],
+                sender: activeAccount.address,
+                signer: dummySigner,
+                suggestedParams: sp
+            });
+
+            await executeATC(atc, algodClient, signTransactions, 4, (s) => {
+                if (s.state === 'pending') setTxStatus({ state: 'pending', message: s.message, txId: s.txId, explorerUrl: s.explorerUrl });
+                if (s.state === 'success') setTxStatus({ state: 'success', message: s.message, txId: s.txId, explorerUrl: s.explorerUrl });
+                if (s.state === 'failed') setTxStatus({ state: 'failed', message: s.message });
+            });
+
+            setStatus(`Successfully bought Ticket #${ticket.index}!`);
+            fetchResaleTickets(); // Refresh list
+            fetchEventDetails(); // Update event stats if needed
+        } catch (error: any) {
+            console.error(error);
+            setStatus(`Resale Purchase Failed: ${error.message}`);
+        } finally {
+            setIsBuyingResale(null);
+        }
+    };
+
     if (isLoading) return <div className="p-10 text-center">Loading Event Details...</div>;
     if (!eventData) return <div className="p-10 text-center text-red-500">Event Not Found</div>;
 
     return (
         <div className="container mx-auto py-10">
-            <TxConfirm open={confirmOpen} title="Confirm Purchase" message="Please confirm the purchase details before proceeding." amountALGO={confirmData?.amount} feeALGO={confirmData?.fee} reserveALGO={confirmData?.reserve} onCancel={() => setConfirmOpen(false)} onConfirm={async () => { setConfirmOpen(false); /* continue purchase */
+            <TxConfirm open={confirmOpen} title="Confirm Purchase" message="Please confirm the purchase details before proceeding." amountALGO={confirmData?.amount} feeALGO={confirmData?.fee} reserveALGO={confirmData?.reserve} onCancel={() => setConfirmOpen(false)} onConfirm={async () => {
+                setConfirmOpen(false); /* continue purchase */
                 try { await buyTicketConfirmed(); } catch (e) { /* handled */ }
             }} />
 
@@ -237,6 +362,40 @@ export default function EventDetailsPage({ params }: { params: { id: string } })
                     )}
                 </CardContent>
             </Card>
-        </div>
+
+            {/* Resale Section */}
+            {
+                resaleTickets.length > 0 && (
+                    <div className="mt-12 max-w-4xl mx-auto">
+                        <h2 className="text-2xl font-bold mb-6 text-center">Resale Tickets</h2>
+                        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                            {resaleTickets.map((ticket) => (
+                                <div key={ticket.index} className="bg-white p-4 rounded-xl border shadow-sm hover:shadow-md transition-all flex flex-col justify-between">
+                                    <div>
+                                        <div className="flex justify-between items-start mb-2">
+                                            <span className="font-bold text-lg">Ticket #{ticket.index}</span>
+                                            <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded-full">Resale</span>
+                                        </div>
+                                        <p className="text-sm text-gray-500 mb-4 truncate" title={ticket.owner}>
+                                            Seller: {ticket.owner.slice(0, 6)}...{ticket.owner.slice(-4)}
+                                        </p>
+                                    </div>
+                                    <div className="flex justify-between items-center mt-2 border-t pt-3">
+                                        <span className="font-bold text-xl">{ticket.price / 1000000} Algo</span>
+                                        <Button
+                                            size="sm"
+                                            onClick={() => buyResaleTicket(ticket)}
+                                            disabled={isBuyingResale !== null || !activeAccount}
+                                        >
+                                            {isBuyingResale === ticket.index ? 'Buying...' : 'Buy Now'}
+                                        </Button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )
+            }
+        </div >
     );
 }

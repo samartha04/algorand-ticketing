@@ -1,161 +1,80 @@
-#pragma version 11
-#pragma typetrack false
+#pragma version 8
+txn NumAppArgs
+int 0
+==
+bnz main_l4
+txna ApplicationArgs 0
+method "register_event(uint64,string)void"
+==
+bnz main_l3
+err
+main_l3:
+txn OnCompletion
+int NoOp
+==
+txn ApplicationID
+int 0
+!=
+&&
+assert
+callsub registereventcaster_1
+int 1
+return
+main_l4:
+txn OnCompletion
+int NoOp
+==
+bnz main_l8
+txn OnCompletion
+int OptIn
+==
+bnz main_l7
+err
+main_l7:
+int 1
+return
+main_l8:
+txn ApplicationID
+int 0
+==
+assert
+int 1
+return
 
-// algopy.arc4.ARC4Contract.approval_program() -> uint64:
-main:
-    intcblock 0 1 8
-    bytecblock "event_count" 0x151f7c75 "events"
-    txn ApplicationID
-    bnz main_after_if_else@2
-    // algokit_contracts/event_factory.py:38
-    // self.event_count = UInt64(0)
-    bytec_0 // "event_count"
-    intc_0 // 0
-    app_global_put
+// register_event
+registerevent_0:
+proto 2 0
+byte "EventCount"
+app_global_get
+store 0
+load 0
+itob
+store 1
+load 1
+frame_dig -2
+itob
+frame_dig -1
+extract 2 0
+concat
+box_put
+byte "EventCount"
+load 0
+int 1
++
+app_global_put
+retsub
 
-main_after_if_else@2:
-    // algokit_contracts/event_factory.py:25
-    // class EventFactory(ARC4Contract):
-    txn NumAppArgs
-    bz main___algopy_default_create@12
-    txn OnCompletion
-    !
-    assert
-    txn ApplicationID
-    assert
-    pushbytess 0x915e7d3d 0xc938aebd 0xab133819 // method "register_event(uint64,string)uint64", method "get_event_count()uint64", method "get_event(uint64)(uint64,string)"
-    txna ApplicationArgs 0
-    match register_event get_event_count get_event
-    err
-
-main___algopy_default_create@12:
-    txn OnCompletion
-    !
-    txn ApplicationID
-    !
-    &&
-    return
-
-
-// algokit_contracts.event_factory.EventFactory.register_event[routing]() -> void:
-register_event:
-    // algokit_contracts/event_factory.py:41
-    // @arc4.abimethod()
-    txna ApplicationArgs 1
-    dup
-    len
-    intc_2 // 8
-    ==
-    assert // invalid number of bytes for arc4.uint64
-    txna ApplicationArgs 2
-    dup
-    intc_0 // 0
-    extract_uint16 // on error: invalid array length header
-    pushint 2
-    +
-    dig 1
-    len
-    ==
-    assert // invalid number of bytes for arc4.dynamic_array<arc4.uint8>
-    // algokit_contracts/event_factory.py:48-49
-    // # Get current index
-    // index = self.event_count
-    intc_0 // 0
-    bytec_0 // "event_count"
-    app_global_get_ex
-    assert // check self.event_count exists
-    // algokit_contracts/event_factory.py:51-55
-    // # Store in box: index -> EventEntry
-    // self.events[index] = EventEntry(
-    //     app_id=app_id,
-    //     name=name,
-    // )
-    uncover 2
-    pushbytes 0x000a
-    concat
-    uncover 2
-    concat
-    // algokit_contracts/event_factory.py:51-52
-    // # Store in box: index -> EventEntry
-    // self.events[index] = EventEntry(
-    dig 1
-    itob
-    bytec_2 // "events"
-    dig 1
-    concat
-    // algokit_contracts/event_factory.py:51-55
-    // # Store in box: index -> EventEntry
-    // self.events[index] = EventEntry(
-    //     app_id=app_id,
-    //     name=name,
-    // )
-    dup
-    box_del
-    pop
-    uncover 2
-    box_put
-    // algokit_contracts/event_factory.py:57-58
-    // # Increment count
-    // self.event_count = index + 1
-    swap
-    intc_1 // 1
-    +
-    bytec_0 // "event_count"
-    swap
-    app_global_put
-    // algokit_contracts/event_factory.py:41
-    // @arc4.abimethod()
-    bytec_1 // 0x151f7c75
-    swap
-    concat
-    log
-    intc_1 // 1
-    return
-
-
-// algokit_contracts.event_factory.EventFactory.get_event_count[routing]() -> void:
-get_event_count:
-    // algokit_contracts/event_factory.py:65
-    // return arc4.UInt64(self.event_count)
-    intc_0 // 0
-    bytec_0 // "event_count"
-    app_global_get_ex
-    assert // check self.event_count exists
-    itob
-    // algokit_contracts/event_factory.py:62
-    // @arc4.abimethod(readonly=True)
-    bytec_1 // 0x151f7c75
-    swap
-    concat
-    log
-    intc_1 // 1
-    return
-
-
-// algokit_contracts.event_factory.EventFactory.get_event[routing]() -> void:
-get_event:
-    // algokit_contracts/event_factory.py:67
-    // @arc4.abimethod(readonly=True)
-    txna ApplicationArgs 1
-    dup
-    len
-    intc_2 // 8
-    ==
-    assert // invalid number of bytes for arc4.uint64
-    // algokit_contracts/event_factory.py:70
-    // return self.events[index.native].copy()
-    btoi
-    itob
-    bytec_2 // "events"
-    swap
-    concat
-    box_get
-    assert // check self.events entry exists
-    // algokit_contracts/event_factory.py:67
-    // @arc4.abimethod(readonly=True)
-    bytec_1 // 0x151f7c75
-    swap
-    concat
-    log
-    intc_1 // 1
-    return
+// register_event_caster
+registereventcaster_1:
+proto 0 0
+int 0
+byte ""
+txna ApplicationArgs 1
+btoi
+frame_bury 0
+txna ApplicationArgs 2
+frame_bury 1
+frame_dig 0
+frame_dig 1
+callsub registerevent_0
+retsub

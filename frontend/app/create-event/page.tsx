@@ -48,6 +48,9 @@ export default function CreateEventPage() {
     const [eventLocation, setEventLocation] = useState('');
     const [price, setPrice] = useState('1');
     const [supply, setSupply] = useState('100');
+    const [cancellationDeadline, setCancellationDeadline] = useState('');
+    const [penaltyPercentage, setPenaltyPercentage] = useState('10');
+    const [royaltyPercentage, setRoyaltyPercentage] = useState('5');
     const [isLoading, setIsLoading] = useState(false);
     const [status, setStatus] = useState('');
     const [currentStep, setCurrentStep] = useState(0);
@@ -138,7 +141,7 @@ export default function CreateEventPage() {
             const params = await algodClient.getTransactionParams().do();
             const approvalProgramBytes = new Uint8Array(atob(approvalBin.result).split('').map(x => x.charCodeAt(0)));
             const clearProgramBytes = new Uint8Array(atob(clearBin.result).split('').map(x => x.charCodeAt(0)));
-            const txn = algosdk.makeApplicationCreateTxnFromObject({ from: activeAccount.address, approvalProgram: approvalProgramBytes, clearProgram: clearProgramBytes, numGlobalByteSlices: 1, numGlobalInts: 3, numLocalByteSlices: 0, numLocalInts: 0, onComplete: algosdk.OnApplicationComplete.NoOpOC, suggestedParams: params, note: new TextEncoder().encode("Event Ticket Manager") });
+            const txn = algosdk.makeApplicationCreateTxnFromObject({ from: activeAccount.address, approvalProgram: approvalProgramBytes, clearProgram: clearProgramBytes, numGlobalByteSlices: 1, numGlobalInts: 4, numLocalByteSlices: 0, numLocalInts: 0, onComplete: algosdk.OnApplicationComplete.NoOpOC, suggestedParams: params, note: new TextEncoder().encode("Event Ticket Manager") });
             // Sign and send directly
             const encoded = algosdk.encodeUnsignedTransaction(txn);
             const signedTxns = await signTransactions([encoded]);
@@ -152,6 +155,7 @@ export default function CreateEventPage() {
             const contract = new algosdk.ABIContract(contractJson);
             const method = contract.getMethodByName('create_event');
             const priceInMicroAlgos = Math.floor(parseFloat(price) * 1000000);
+            const cancellationDeadlineTimestamp = Math.floor(new Date(cancellationDeadline).getTime() / 1000);
             const initParams = await algodClient.getTransactionParams().do();
             const atc = new algosdk.AtomicTransactionComposer();
             const fundTxn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
@@ -161,7 +165,18 @@ export default function CreateEventPage() {
                 suggestedParams: initParams
             });
             atc.addTransaction({ txn: fundTxn, signer: dummySigner });
-            atc.addMethodCall({ appID: appId, method, methodArgs: [priceInMicroAlgos, parseInt(supply)], sender: activeAccount.address, signer: dummySigner, suggestedParams: initParams });
+            atc.addMethodCall({
+                appID: appId,
+                method,
+                methodArgs: [
+                    priceInMicroAlgos,
+                    parseInt(supply),
+                    cancellationDeadlineTimestamp
+                ],
+                sender: activeAccount.address,
+                signer: dummySigner,
+                suggestedParams: initParams
+            });
             await executeATC(atc, algodClient, signTransactions, 4, (s) => {
                 if (s.state === 'pending') setTxStatus({ state: 'pending', message: s.message, txId: s.txId, explorerUrl: s.explorerUrl });
                 if (s.state === 'success') setTxStatus({ state: 'success', message: s.message, txId: s.txId, explorerUrl: s.explorerUrl });
@@ -175,33 +190,28 @@ export default function CreateEventPage() {
                 const globalState = facAppInfo.params["global-state"];
                 const countState = globalState?.find((s: any) => s.key === btoa("event_count")) ?? globalState?.find((s: any) => s.key === btoa("EventCount"));
                 const eventCount = countState ? countState.value.uint : 0;
-                const eventsPrefix = new TextEncoder().encode("events");
                 const rawKey = algosdk.encodeUint64(eventCount);
-                const boxKey = new Uint8Array(eventsPrefix.length + rawKey.length);
-                boxKey.set(eventsPrefix, 0);
-                boxKey.set(rawKey, eventsPrefix.length);
+                // Contract uses just the integer count as key
+                const boxKey = rawKey;
                 const atcFactory = new algosdk.AtomicTransactionComposer();
                 const factoryParams = await algodClient.getTransactionParams().do();
                 const factoryAddr = algosdk.getApplicationAddress(factoryAppId);
                 const payTxn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({ from: activeAccount.address, to: factoryAddr, amount: 200000, suggestedParams: factoryParams });
                 atcFactory.addTransaction({ txn: payTxn, signer: dummySigner });
-                // Build register_event call with exact selector from event_factory_approval.teal so it matches deployed AlgoKit factory
-                const REGISTER_EVENT_SELECTOR = new Uint8Array([0x91, 0x5e, 0x7d, 0x3d]);
-                const nameBytes = new TextEncoder().encode(eventName);
-                const nameEncoded = new Uint8Array(2 + nameBytes.length);
-                nameEncoded[0] = (nameBytes.length >> 8) & 0xff;
-                nameEncoded[1] = nameBytes.length & 0xff;
-                nameEncoded.set(nameBytes, 2);
-                const registerAppArgs = [REGISTER_EVENT_SELECTOR, algosdk.encodeUint64(appId), nameEncoded];
-                const registerTxn = algosdk.makeApplicationCallTxnFromObject({
-                    from: activeAccount.address,
-                    appIndex: factoryAppId,
-                    onComplete: algosdk.OnApplicationComplete.NoOpOC,
-                    appArgs: registerAppArgs,
-                    boxes: [{ appIndex: factoryAppId, name: boxKey }],
-                    suggestedParams: { ...factoryParams, fee: 2000, flatFee: true },
+                // Use ABI for register_event to ensure correct selector
+                const factoryContractJson = await fetch('/utils/contracts/event_factory_contract.json').then(r => r.json());
+                const factoryContract = new algosdk.ABIContract(factoryContractJson);
+                const factoryMethod = factoryContract.getMethodByName('register_event');
+
+                atcFactory.addMethodCall({
+                    appID: factoryAppId,
+                    method: factoryMethod,
+                    methodArgs: [appId, eventName],
+                    boxes: [{ appIndex: 0, name: boxKey }],
+                    sender: activeAccount.address,
+                    signer: dummySigner,
+                    suggestedParams: { ...factoryParams, fee: 2000, flatFee: true }
                 });
-                atcFactory.addTransaction({ txn: registerTxn, signer: dummySigner });
                 await executeATC(atcFactory, algodClient, signTransactions, 4, (s) => {
                     if (s.state === 'pending') setTxStatus({ state: 'pending', message: s.message, txId: s.txId, explorerUrl: s.explorerUrl });
                     if (s.state === 'success') setTxStatus({ state: 'success', message: s.message, txId: s.txId, explorerUrl: s.explorerUrl });
@@ -217,7 +227,16 @@ export default function CreateEventPage() {
                 saveDeployedEvent(appId, factoryAppId);
                 setStatus(`✓ Event created! (Not registered - No Factory ID found. Did you refresh?)`);
             }
-        } catch (error: any) { console.error(error); setStatus(`Error: ${error.message}`); }
+        } catch (error: any) {
+            console.error(error);
+            if (error.message?.includes('4100') || error.message?.includes('Transaction request pending')) {
+                setStatus('Please check your wallet app to complete the pending transaction.');
+            } else if (error.message.includes('invalid Box reference') || error.message.includes('box')) {
+                setStatus(`Error: Contract version mismatch. Please DEPLOY A NEW FACTORY to fix.`);
+            } else {
+                setStatus(`Error: ${error.message}`);
+            }
+        }
         finally { setIsLoading(false); }
     };
 
@@ -289,6 +308,25 @@ export default function CreateEventPage() {
                             <div className="space-y-2">
                                 <label className="text-sm font-bold text-gray-800">Total Supply</label>
                                 <input className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#685AFF]/30 focus:border-[#685AFF] transition-all" type="number" min="1" value={supply} onChange={(e) => setSupply(e.target.value)} />
+                            </div>
+                        </div>
+
+                        {/* Cancellation & Royalty Settings */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div className="space-y-2">
+                                <label className="text-sm font-bold text-gray-800">Cancellation Deadline</label>
+                                <input className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#685AFF]/30 focus:border-[#685AFF] transition-all" type="datetime-local" value={cancellationDeadline} onChange={(e) => setCancellationDeadline(e.target.value)} />
+                                <p className="text-xs text-gray-400">Last time to cancel tickets</p>
+                            </div>
+                            <div className="space-y-2">
+                                <label className="text-sm font-bold text-gray-800">Penalty %</label>
+                                <input className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#685AFF]/30 focus:border-[#685AFF] transition-all" type="number" min="0" max="100" value={penaltyPercentage} onChange={(e) => setPenaltyPercentage(e.target.value)} />
+                                <p className="text-xs text-gray-400">Deducted on cancellation</p>
+                            </div>
+                            <div className="space-y-2">
+                                <label className="text-sm font-bold text-gray-800">Royalty %</label>
+                                <input className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#685AFF]/30 focus:border-[#685AFF] transition-all" type="number" min="0" max="100" value={royaltyPercentage} onChange={(e) => setRoyaltyPercentage(e.target.value)} />
+                                <p className="text-xs text-gray-400">From resale transactions</p>
                             </div>
                         </div>
 

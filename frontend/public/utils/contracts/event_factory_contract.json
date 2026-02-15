@@ -1,10 +1,8 @@
 {
-    "name": "EventFactory",
-    "desc": "On-chain registry of events. Each registered event gets a box keyed by its index.",
+    "name": "EventFactoryRepository",
     "methods": [
         {
             "name": "register_event",
-            "desc": "Register a new TicketManager event contract. Returns the event index.",
             "args": [
                 {
                     "type": "uint64",
@@ -16,29 +14,9 @@
                 }
             ],
             "returns": {
-                "type": "uint64"
-            }
-        },
-        {
-            "name": "get_event_count",
-            "desc": "Returns the total number of registered events.",
-            "args": [],
-            "returns": {
-                "type": "uint64"
-            }
-        },
-        {
-            "name": "get_event",
-            "desc": "Returns the event entry at the given index.",
-            "args": [
-                {
-                    "type": "uint64",
-                    "name": "index"
-                }
-            ],
-            "returns": {
-                "type": "(uint64,string)"
+                "type": "void"
             }
         }
-    ]
+    ],
+    "networks": {}
 }

@@ -34,7 +34,7 @@
             "args": [
                 {
                     "type": "uint64",
-                    "name": "ticket_id"
+                    "name": "ticket_index"
                 }
             ],
             "returns": {
@@ -46,7 +46,70 @@
             "args": [
                 {
                     "type": "uint64",
-                    "name": "ticket_id"
+                    "name": "ticket_index"
+                }
+            ],
+            "returns": {
+                "type": "void"
+            }
+        },
+        {
+            "name": "withdraw_funds",
+            "args": [
+                {
+                    "type": "uint64",
+                    "name": "amount"
+                }
+            ],
+            "returns": {
+                "type": "void"
+            }
+        },
+        {
+            "name": "get_event_info",
+            "args": [],
+            "returns": {
+                "type": "(uint64,uint64,uint64)"
+            }
+        },
+        {
+            "name": "list_for_resale",
+            "args": [
+                {
+                    "type": "uint64",
+                    "name": "ticket_index"
+                },
+                {
+                    "type": "uint64",
+                    "name": "price"
+                }
+            ],
+            "returns": {
+                "type": "void"
+            }
+        },
+        {
+            "name": "delist_resale_ticket",
+            "args": [
+                {
+                    "type": "uint64",
+                    "name": "ticket_index"
+                }
+            ],
+            "returns": {
+                "type": "void"
+            }
+        },
+        {
+            "name": "buy_resale_ticket",
+            "args": [
+                {
+                    "type": "uint64",
+                    "name": "ticket_index"
+                },
+                {
+                    "type": "pay",
+                    "name": "payment"
                 }
             ],
             "returns": {

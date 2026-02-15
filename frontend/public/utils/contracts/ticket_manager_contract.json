@@ -11,6 +11,10 @@
                 {
                     "type": "uint64",
                     "name": "supply"
+                },
+                {
+                    "type": "uint64",
+                    "name": "deadline"
                 }
             ],
             "returns": {
@@ -70,6 +74,62 @@
             "args": [],
             "returns": {
                 "type": "(uint64,uint64,uint64)"
+            }
+        },
+        {
+            "name": "cancel_ticket",
+            "args": [
+                {
+                    "type": "uint64",
+                    "name": "ticket_index"
+                }
+            ],
+            "returns": {
+                "type": "void"
+            }
+        },
+        {
+            "name": "list_for_resale",
+            "args": [
+                {
+                    "type": "uint64",
+                    "name": "ticket_index"
+                },
+                {
+                    "type": "uint64",
+                    "name": "price"
+                }
+            ],
+            "returns": {
+                "type": "void"
+            }
+        },
+        {
+            "name": "delist_resale_ticket",
+            "args": [
+                {
+                    "type": "uint64",
+                    "name": "ticket_index"
+                }
+            ],
+            "returns": {
+                "type": "void"
+            }
+        },
+        {
+            "name": "buy_resale_ticket",
+            "args": [
+                {
+                    "type": "uint64",
+                    "name": "ticket_index"
+                },
+                {
+                    "type": "pay",
+                    "name": "payment"
+                }
+            ],
+            "returns": {
+                "type": "void"
             }
         }
     ],

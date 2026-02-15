@@ -1,70 +1,51 @@
-"""
-Event Factory (Registry) Smart Contract — Algorand Python (ARC4)
+from pyteal import *
 
-A simple on-chain registry that stores references to all deployed
-TicketManager contracts. Organizers register their events here so
-the frontend can discover them.
-"""
+# This contract acts as a Registry for all events created on the platform.
+# Organizers deploy their own TicketManager contract, then register it here.
 
-from algopy import (
-    ARC4Contract,
-    BoxMap,
-    Global,
-    Txn,
-    UInt64,
-    arc4,
+router = Router(
+    "EventFactoryRepository",
+    BareCallActions(
+        no_op=OnCompleteAction.create_only(Approve()),
+        opt_in=OnCompleteAction.always(Approve()),
+    ),
 )
 
+EVENT_COUNT = Bytes("EventCount")
 
-class EventEntry(arc4.Struct):
-    """Stores a registered event's app ID and display name."""
-    app_id: arc4.UInt64
-    name: arc4.String
+@router.method
+def register_event(app_id: abi.Uint64, name: abi.String):
+    return Seq(
+        # Increment event count
+        # Store in box: Key = Count, Value = {AppID, Name}
+        # Or simpler: Just emit an event?
+        # Using boxes for storage.
+        
+        # Get current count
+        (current_count := ScratchVar()).store(App.globalGet(EVENT_COUNT)),
+        
+        # Create Box Key
+        (box_key := ScratchVar()).store(Itob(current_count.load())),
+        
+        # Store AppID + Name in Box
+        App.box_put(box_key.load(), Concat(Itob(app_id.get()), name.get())),
+        
+        # Increment Global Count
+        App.globalPut(EVENT_COUNT, current_count.load() + Int(1)),
+    )
 
+if __name__ == "__main__":
+    import os
+    import json
 
-class EventFactory(ARC4Contract):
-    """
-    On-chain registry of events.
-    Each registered event gets a box keyed by its index (0, 1, 2, ...).
-    """
+    path = os.path.dirname(os.path.abspath(__file__))
+    approval, clear, contract = router.compile_program(version=8)
+    
+    with open(os.path.join(path, "event_factory_approval.teal"), "w") as f:
+        f.write(approval)
+        
+    with open(os.path.join(path, "event_factory_clear.teal"), "w") as f:
+        f.write(clear)
 
-    # Global state
-    event_count: UInt64
-
-    # Box storage: index -> EventEntry (must be defined before use)
-    events: BoxMap[UInt64, EventEntry]
-
-    def __init__(self) -> None:
-        self.event_count = UInt64(0)
-        self.events = BoxMap(UInt64, EventEntry)
-
-    @arc4.abimethod()
-    def register_event(self, app_id: arc4.UInt64, name: arc4.String) -> arc4.UInt64:
-        """
-        Register a new TicketManager event contract.
-        Payment for box storage must be included in the group.
-        Returns the event index.
-        """
-        # Get current index
-        index = self.event_count
-
-        # Store in box: index -> EventEntry
-        self.events[index] = EventEntry(
-            app_id=app_id,
-            name=name,
-        )
-
-        # Increment count
-        self.event_count = index + 1
-
-        return arc4.UInt64(index)
-
-    @arc4.abimethod(readonly=True)
-    def get_event_count(self) -> arc4.UInt64:
-        """Returns the total number of registered events."""
-        return arc4.UInt64(self.event_count)
-
-    @arc4.abimethod(readonly=True)
-    def get_event(self, index: arc4.UInt64) -> EventEntry:
-        """Returns the event entry at the given index."""
-        return self.events[index.native].copy()
+    with open(os.path.join(path, "event_factory_contract.json"), "w") as f:
+        f.write(json.dumps(contract.dictify(), indent=4))

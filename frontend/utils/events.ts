@@ -32,6 +32,16 @@ function buildBoxKey(prefix: Uint8Array, key: Uint8Array): Uint8Array {
     return result;
 }
 
+function decodeEventName(raw: Uint8Array): string {
+    if (raw.length >= 2) {
+        const nameLen = (raw[0] << 8) | raw[1];
+        if (nameLen >= 0 && nameLen <= raw.length - 2) {
+            return new TextDecoder().decode(raw.slice(2, 2 + nameLen));
+        }
+    }
+    return new TextDecoder().decode(raw);
+}
+
 // Fetch all registered events from the Factory
 export async function fetchAllEvents(
     factoryAppId: number,
@@ -44,8 +54,9 @@ export async function fetchAllEvents(
         // 1. Get Event Count from global state
         const appInfo = await algodClient.getApplicationByID(factoryAppId).do();
         const globalState = appInfo.params["global-state"];
-        const countKey = btoa("event_count"); // AlgoKit uses lowercase
-        const countState = globalState?.find((s: any) => s.key === countKey);
+        const countState =
+            globalState?.find((s: any) => s.key === btoa("event_count")) ??
+            globalState?.find((s: any) => s.key === btoa("EventCount"));
         const eventCount = countState ? countState.value.uint : 0;
 
         const events: EventInfo[] = [];
@@ -53,15 +64,12 @@ export async function fetchAllEvents(
         // 2. Iterate Events (AlgoKit BoxMap with "events" prefix)
         for (let i = 0; i < eventCount; i++) {
             try {
-                // AlgoKit BoxMap key = prefix + encoded_uint64
-                const boxKey = buildBoxKey(EVENTS_BOX_PREFIX, algosdk.encodeUint64(i));
+                // Contract uses just the integer count (uint64) as key, NO prefix
+                const boxKey = algosdk.encodeUint64(i);
                 const box = await algodClient.getApplicationBoxByName(factoryAppId, boxKey).do();
 
-                // Parse EventEntry struct: [AppID (8 bytes)][Offset (2 bytes)][Name Length (2 bytes)][Name Bytes]
-                // ARC4 Tuple with dynamic string: first 8 bytes = uint64 app_id, then 2-byte offset, then string
                 const id = algosdk.decodeUint64(box.value.slice(0, 8), 'safe');
-                const nameLen = (box.value[8] << 8) | box.value[9];
-                const name = new TextDecoder().decode(box.value.slice(10, 10 + nameLen));
+                const name = decodeEventName(box.value.slice(8));
 
                 // 3. Fetch Event Details from Ticket Manager Contract (Global State)
                 const eventAppInfo = await algodClient.getApplicationByID(Number(id)).do();

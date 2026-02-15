@@ -1,168 +1,314 @@
-"""
-Ticket Manager Smart Contract — Algorand Python (ARC4)
+from pyteal import *
 
-This contract manages event ticketing on the Algorand blockchain.
-Features:
-  - Event creation with configurable price and supply
-  - NFT ticket minting on purchase (atomic inner txns)
-  - Ticket claiming (transfer NFT to buyer)
-  - On-chain check-in (organizer marks ticket as used)
-  - Revenue withdrawal by organizer
-"""
-
-from algopy import (
-    ARC4Contract,
-    Asset,
-    BoxMap,
-    Global,
-    Txn,
-    UInt64,
-    arc4,
-    gtxn,
-    itxn,
-    op,
-    subroutine,
+# Main Router
+router = Router(
+    "TicketManager",
+    BareCallActions(
+        no_op=OnCompleteAction.create_only(Approve()),
+        opt_in=OnCompleteAction.always(Approve()),
+        close_out=OnCompleteAction.always(Approve()),
+        update_application=OnCompleteAction.always(Return(Txn.sender() == Global.creator_address())),
+        delete_application=OnCompleteAction.always(Return(Txn.sender() == Global.creator_address())),
+    ),
 )
 
+# Global State Keys
+PRICE = Bytes("Price")
+SUPPLY = Bytes("Supply")
+SOLD = Bytes("Sold")
+ORGANIZER = Bytes("Organizer")
+DEADLINE = Bytes("Deadline")
 
-# Ticket status: 33 bytes total (32-byte address + 1 status byte)
-# Status: 0 = Pending, 1 = Claimed, 2 = Used
-class TicketInfo(arc4.Struct):
-    owner: arc4.Address
-    status: arc4.UInt8
+@router.method
+def create_event(price: abi.Uint64, supply: abi.Uint64, deadline: abi.Uint64):
+    return Seq(
+        # Only Creator can initialize
+        Assert(Txn.sender() == Global.creator_address()),
+        App.globalPut(PRICE, price.get()),
+        App.globalPut(SUPPLY, supply.get()),
+        App.globalPut(SOLD, Int(0)), 
+        App.globalPut(ORGANIZER, Txn.sender()),
+        App.globalPut(DEADLINE, deadline.get()),
+    )
 
+@router.method
+def buy_ticket(payment: abi.PaymentTransaction):
+    sold_count = App.globalGet(SOLD)
+    supply = App.globalGet(SUPPLY)
+    
+    return Seq(
+        # Checks
+        Assert(payment.get().receiver() == Global.current_application_address()),
+        Assert(payment.get().amount() == App.globalGet(PRICE)),
+        Assert(sold_count < supply), 
+        
+        # Increment Sold
 
-class TicketManager(ARC4Contract):
-    """
-    Manages event tickets as on-chain NFTs (ASAs).
-    Each ticket is a unique ASA minted by the contract.
-    Ticket metadata is stored in boxes keyed by asset ID.
-    """
-
-    # Global state
-    price: UInt64
-    supply: UInt64
-    sold: UInt64
-    organizer: arc4.Address
-
-    # Box storage: ticket_id -> TicketInfo
-    tickets: BoxMap[UInt64, TicketInfo]
-
-    def __init__(self) -> None:
-        self.price = UInt64(0)
-        self.supply = UInt64(0)
-        self.sold = UInt64(0)
-        self.organizer = arc4.Address()
-        self.tickets = BoxMap(UInt64, TicketInfo)
-
-    @arc4.abimethod()
-    def create_event(self, price: arc4.UInt64, supply: arc4.UInt64) -> None:
-        """Initialize event with price (microAlgos) and ticket supply. Only creator can call."""
-        assert Txn.sender == Global.creator_address, "Only creator can initialize"
-        self.price = price.native
-        self.supply = supply.native
-        self.sold = UInt64(0)
-        self.organizer = arc4.Address(Txn.sender)
-
-    @arc4.abimethod()
-    def buy_ticket(self, payment: gtxn.PaymentTransaction) -> arc4.UInt64:
-        """
-        Purchase a ticket. Requires a payment transaction for the ticket price.
-        Mints a unique NFT and stores buyer info in a box.
-        Returns the minted asset ID.
-        """
-        # Validate payment
-        assert payment.receiver == Global.current_application_address, "Pay the contract"
-        assert payment.amount == self.price, "Incorrect payment amount"
-        assert self.sold < self.supply, "Sold out"
-
-        # Increment sold count
-        self.sold += 1
-
-        # Mint NFT ticket via inner transaction
-        ticket_asset = (
-            itxn.AssetConfig(
-                total=1,
-                decimals=0,
-                default_frozen=False,
-                asset_name=b"TICKET",
-                unit_name=b"TKT",
-                manager=Global.current_application_address,
+        
+        # Inner Txn: Mint NFT
+        InnerTxnBuilder.Begin(),
+        InnerTxnBuilder.SetFields({
+            TxnField.type_enum: TxnType.AssetConfig,
+            TxnField.config_asset_total: Int(1),
+            TxnField.config_asset_decimals: Int(0),
+            TxnField.config_asset_default_frozen: Int(0),
+            TxnField.config_asset_name: Bytes("TICKET"),
+            TxnField.config_asset_unit_name: Bytes("TKT"),
+            TxnField.config_asset_clawback: Global.current_application_address(), # Enable Clawback for Resale
+        }),
+        InnerTxnBuilder.Submit(),
+        
+        # Store Ticket Info in Box (Key: 'tickets' + index)
+        # Value: [AssetID 8][Owner 32][Status 1][ResalePrice 8]
+        # Total 49 bytes. Init Price = 0.
+        App.box_put(
+            Concat(Bytes("tickets"), Itob(sold_count)), 
+            Concat(
+                Itob(InnerTxn.created_asset_id()),
+                Txn.sender(),
+                Bytes("\x00"), # 0 = Pending
+                Itob(Int(0))   # Resale Price
             )
-            .submit()
-            .created_asset
-        )
+        ),
+        # Log AssetID for debugging
+        Log(Concat(Bytes("AssetID:"), Itob(InnerTxn.created_asset_id()))),
 
-        # Store ticket info in box
-        self.tickets[ticket_asset.id] = TicketInfo(
-            owner=arc4.Address(Txn.sender),
-            status=arc4.UInt8(0),  # Pending
-        )
+        # Increment Sold
+        App.globalPut(SOLD, sold_count + Int(1)),
+    )
 
-        return arc4.UInt64(ticket_asset.id)
+@router.method
+def claim_ticket(ticket_index: abi.Uint64):
+    # Box Key: 'tickets' + index
+    box_key = Concat(Bytes("tickets"), Itob(ticket_index.get()))
+    
+    # Create ScratchVars outside Seq
+    box_val = App.box_get(box_key)
+    asset_id = ScratchVar(TealType.uint64)
+    owner = ScratchVar(TealType.bytes)
+    status = ScratchVar(TealType.bytes)
+    
+    return Seq(
+        # Read Box
+        (box_val_result := box_val),
+        Assert(box_val_result.hasValue()),
+        
+        # Parse Value
+        asset_id.store(Btoi(Extract(box_val_result.value(), Int(0), Int(8)))),
+        owner.store(Extract(box_val_result.value(), Int(8), Int(32))),
+        status.store(Extract(box_val_result.value(), Int(40), Int(1))),
+        
+        # Verify Caller is Owner
+        Assert(Txn.sender() == owner.load()),
+        
+        # Verify Status is 'Pending' (0)
+        Assert(status.load() == Bytes("\x00")),
+        
+        # Inner Txn: Transfer Asset
+        InnerTxnBuilder.Begin(),
+        InnerTxnBuilder.SetFields({
+            TxnField.type_enum: TxnType.AssetTransfer,
+            TxnField.sender: Global.current_application_address(), # Explicit Sender
+            TxnField.xfer_asset: asset_id.load(),
+            TxnField.asset_receiver: Txn.sender(),
+            TxnField.asset_amount: Int(1),
+            TxnField.fee: Int(0), # Inner txn fee covered by outer txn
+        }),
+        InnerTxnBuilder.Submit(),
+        
+        # Update Status to 'Claimed' (1)
+        App.box_replace(box_key, Int(40), Bytes("\x01")),
+    )
 
-    @arc4.abimethod()
-    def claim_ticket(self, ticket_id: arc4.UInt64) -> None:
-        """
-        Claim a purchased ticket. Transfers the NFT to the buyer.
-        Buyer must opt-in to the ASA before calling this.
-        """
-        asset_id = ticket_id.native
-        ticket = self.tickets[asset_id].copy()
+@router.method
+def check_in(ticket_index: abi.Uint64):
+    # Box Key
+    box_key = Concat(Bytes("tickets"), Itob(ticket_index.get()))
+    
+    return Seq(
+        # Read Box
+        (box_val := App.box_get(box_key)),
+        Assert(box_val.hasValue()),
+        
+        # Verify Organizer
+        Assert(Txn.sender() == App.globalGet(ORGANIZER)),
+        
+        # Verify Status is 'Claimed' (1)
+        # Extract(40, 1) == 0x01
+        Assert(Extract(box_val.value(), Int(40), Int(1)) == Bytes("\x01")),
+        
+        # Update Status to 'Used' (2)
+        App.box_replace(box_key, Int(40), Bytes("\x02")),
+    )
 
-        # Verify caller is the ticket owner
-        assert Txn.sender == ticket.owner.native, "Not the ticket owner"
+@router.method
+def withdraw_funds(amount: abi.Uint64):
+    return Seq(
+        Assert(Txn.sender() == App.globalGet(ORGANIZER)),
+        InnerTxnBuilder.Begin(),
+        InnerTxnBuilder.SetFields({
+            TxnField.type_enum: TxnType.Payment,
+            TxnField.receiver: Txn.sender(),
+            TxnField.amount: amount.get(),
+            TxnField.fee: Int(0),
+        }),
+        InnerTxnBuilder.Submit(),
+    )
 
-        # Verify status is Pending (0)
-        assert ticket.status == arc4.UInt8(0), "Ticket already claimed"
+@router.method
+def get_event_info(*, output: abi.Tuple3[abi.Uint64, abi.Uint64, abi.Uint64]):
+    return Seq(
+        (price := abi.Uint64()).set(App.globalGet(PRICE)),
+        (supply := abi.Uint64()).set(App.globalGet(SUPPLY)),
+        (sold := abi.Uint64()).set(App.globalGet(SOLD)),
+        output.set(price, supply, sold),
+    )
 
-        # Transfer NFT to buyer via inner transaction
-        itxn.AssetTransfer(
-            xfer_asset=Asset(asset_id),
-            asset_receiver=Txn.sender,
-            asset_amount=1,
-        ).submit()
 
-        # Update status to Claimed (1)
-        self.tickets[asset_id] = TicketInfo(
-            owner=ticket.owner,
-            status=arc4.UInt8(1),
-        )
+@router.method
+def cancel_ticket(ticket_index: abi.Uint64):
+    box_key = Concat(Bytes("tickets"), Itob(ticket_index.get()))
+    return Seq(
+        (box_val := App.box_get(box_key)),
+        Assert(box_val.hasValue()),
+        
+        # Verify Deadline
+        Assert(Global.latest_timestamp() < App.globalGet(DEADLINE)),
+        
+        # Verify Owner
+        Assert(Txn.sender() == Extract(box_val.value(), Int(8), Int(32))),
+        
+        # Check Status (0=Pending, 1=Claimed)
+        (status := ScratchVar(TealType.bytes)).store(Extract(box_val.value(), Int(40), Int(1))),
+        Assert(Or(status.load() == Bytes("\x00"), status.load() == Bytes("\x01"))),
+        
+        # Parse AssetID
+        (asset_id := ScratchVar(TealType.uint64)).store(Btoi(Extract(box_val.value(), Int(0), Int(8)))),
 
-    @arc4.abimethod()
-    def check_in(self, ticket_id: arc4.UInt64) -> None:
-        """
-        Mark a ticket as used (check-in at the venue).
-        Only the organizer can call this.
-        """
-        asset_id = ticket_id.native
-        ticket = self.tickets[asset_id].copy()
+        # If Status == Claimed (1), Clawback Asset
+        If(status.load() == Bytes("\x01")).Then(
+            InnerTxnBuilder.Begin(),
+            InnerTxnBuilder.SetFields({
+                TxnField.type_enum: TxnType.AssetTransfer,
+                TxnField.xfer_asset: asset_id.load(),
+                TxnField.asset_sender: Txn.sender(),
+                TxnField.asset_receiver: Global.current_application_address(),
+                TxnField.asset_amount: Int(1),
+                TxnField.fee: Int(0),
+            }),
+            InnerTxnBuilder.Submit(),
+        ),
 
-        # Only organizer can verify
-        assert Txn.sender == self.organizer.native, "Only organizer"
+        # Refund Price
+        InnerTxnBuilder.Begin(),
+        InnerTxnBuilder.SetFields({
+            TxnField.type_enum: TxnType.Payment,
+            TxnField.receiver: Txn.sender(),
+            TxnField.amount: App.globalGet(PRICE),
+            TxnField.fee: Int(0),
+        }),
+        InnerTxnBuilder.Submit(),
 
-        # Must be in Claimed (1) status
-        assert ticket.status == arc4.UInt8(1), "Ticket not in claimed state"
+        # Update Status to Cancelled (4)
+        App.box_replace(box_key, Int(40), Bytes("\x04")),
+    )
 
-        # Update to Used (2)
-        self.tickets[asset_id] = TicketInfo(
-            owner=ticket.owner,
-            status=arc4.UInt8(2),
-        )
+@router.method
+def list_for_resale(ticket_index: abi.Uint64, price: abi.Uint64):
+    box_key = Concat(Bytes("tickets"), Itob(ticket_index.get()))
+    return Seq(
+        (box_val := App.box_get(box_key)),
+        Assert(box_val.hasValue()),
+        # Check Owner match
+        Assert(Txn.sender() == Extract(box_val.value(), Int(8), Int(32))),
+        # Check Status == Claimed (1)
+        Assert(Extract(box_val.value(), Int(40), Int(1)) == Bytes("\x01")),
+        
+        # Update Status to Listed (3)
+        App.box_replace(box_key, Int(40), Bytes("\x03")),
+        # Update Price
+        App.box_replace(box_key, Int(41), Itob(price.get())),
+    )
 
-    @arc4.abimethod()
-    def withdraw_funds(self, amount: arc4.UInt64) -> None:
-        """Withdraw revenue from ticket sales. Only organizer can call."""
-        assert Txn.sender == self.organizer.native, "Only organizer"
+@router.method
+def delist_resale_ticket(ticket_index: abi.Uint64):
+    box_key = Concat(Bytes("tickets"), Itob(ticket_index.get()))
+    return Seq(
+        (box_val := App.box_get(box_key)),
+        Assert(box_val.hasValue()),
+        Assert(Txn.sender() == Extract(box_val.value(), Int(8), Int(32))),
+        # Check Status == Listed (3)
+        Assert(Extract(box_val.value(), Int(40), Int(1)) == Bytes("\x03")),
+        
+        # Update Status to Claimed (1)
+        App.box_replace(box_key, Int(40), Bytes("\x01")),
+        # Reset Price
+        App.box_replace(box_key, Int(41), Itob(Int(0))),
+    )
 
-        itxn.Payment(
-            receiver=Txn.sender,
-            amount=amount.native,
-        ).submit()
+@router.method
+def buy_resale_ticket(ticket_index: abi.Uint64, payment: abi.PaymentTransaction):
+    box_key = Concat(Bytes("tickets"), Itob(ticket_index.get()))
+    owner = ScratchVar(TealType.bytes)
+    price = ScratchVar(TealType.uint64)
+    asset_id = ScratchVar(TealType.uint64)
+    
+    return Seq(
+        (box_val := App.box_get(box_key)),
+        Assert(box_val.hasValue()),
+        
+        owner.store(Extract(box_val.value(), Int(8), Int(32))),
+        asset_id.store(Btoi(Extract(box_val.value(), Int(0), Int(8)))),
+        price.store(Btoi(Extract(box_val.value(), Int(41), Int(8)))),
+        
+        # Verify Status == Listed (3)
+        Assert(Extract(box_val.value(), Int(40), Int(1)) == Bytes("\x03")),
+        
+        # Verify Payment
+        Assert(payment.get().receiver() == Global.current_application_address()),
+        Assert(payment.get().amount() >= price.load()),
+        
+        # Clawback Asset: Seller -> Buyer
+        InnerTxnBuilder.Begin(),
+        InnerTxnBuilder.SetFields({
+            TxnField.type_enum: TxnType.AssetTransfer,
+            TxnField.xfer_asset: asset_id.load(),
+            TxnField.asset_sender: owner.load(), # From Seller
+            TxnField.asset_receiver: Txn.sender(), # To Buyer
+            TxnField.asset_amount: Int(1),
+            TxnField.fee: Int(0),
+        }),
+        InnerTxnBuilder.Submit(),
+        
+        # Pay Seller
+        InnerTxnBuilder.Begin(),
+        InnerTxnBuilder.SetFields({
+            TxnField.type_enum: TxnType.Payment,
+            TxnField.receiver: owner.load(),
+            TxnField.amount: price.load(),
+            TxnField.fee: Int(0),
+        }),
+        InnerTxnBuilder.Submit(),
+        
+        # Update Box: Owner = Buyer, Status = 1 (Claimed), Price = 0
+        App.box_replace(box_key, Int(8), Txn.sender()),
+        App.box_replace(box_key, Int(40), Bytes("\x01")),
+        App.box_replace(box_key, Int(41), Itob(Int(0))),
+    )
 
-    @arc4.abimethod(readonly=True)
-    def get_event_info(self) -> arc4.Tuple[arc4.UInt64, arc4.UInt64, arc4.UInt64]:
-        """Read-only: returns (price, supply, sold)."""
-        return arc4.Tuple(
-            (arc4.UInt64(self.price), arc4.UInt64(self.supply), arc4.UInt64(self.sold))
-        )
+if __name__ == "__main__":
+    import os
+    import json
+
+    # Compile
+    approval_program, clear_program, contract = router.compile_program(version=10)
+
+    # Save
+    with open("ticket_manager_approval.teal", "w") as f:
+        f.write(approval_program)
+
+    with open("ticket_manager_clear.teal", "w") as f:
+        f.write(clear_program)
+
+    with open("ticket_manager_contract.json", "w") as f:
+        json.dump(contract.dictify(), f, indent=4)

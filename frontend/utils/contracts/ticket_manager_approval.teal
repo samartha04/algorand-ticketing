@@ -1,112 +1,192 @@
-#pragma version 8
+#pragma version 10
 txn NumAppArgs
 int 0
 ==
-bnz main_l10
+bnz main_l20
 txna ApplicationArgs 0
 method "create_event(uint64,uint64)void"
 ==
-bnz main_l9
+bnz main_l19
 txna ApplicationArgs 0
 method "buy_ticket(pay)void"
 ==
-bnz main_l8
+bnz main_l18
 txna ApplicationArgs 0
 method "claim_ticket(uint64)void"
 ==
-bnz main_l7
+bnz main_l17
 txna ApplicationArgs 0
 method "check_in(uint64)void"
 ==
-bnz main_l6
-err
-main_l6:
-txn OnCompletion
-int NoOp
-==
-txn ApplicationID
-int 0
-!=
-&&
-assert
-callsub checkincaster_7
-int 1
-return
-main_l7:
-txn OnCompletion
-int NoOp
-==
-txn ApplicationID
-int 0
-!=
-&&
-assert
-callsub claimticketcaster_6
-int 1
-return
-main_l8:
-txn OnCompletion
-int NoOp
-==
-txn ApplicationID
-int 0
-!=
-&&
-assert
-callsub buyticketcaster_5
-int 1
-return
-main_l9:
-txn OnCompletion
-int NoOp
-==
-txn ApplicationID
-int 0
-!=
-&&
-assert
-callsub createeventcaster_4
-int 1
-return
-main_l10:
-txn OnCompletion
-int NoOp
-==
-bnz main_l20
-txn OnCompletion
-int OptIn
-==
-bnz main_l19
-txn OnCompletion
-int CloseOut
-==
-bnz main_l18
-txn OnCompletion
-int UpdateApplication
-==
-bnz main_l17
-txn OnCompletion
-int DeleteApplication
-==
 bnz main_l16
-err
-main_l16:
-txn Sender
-global CreatorAddress
+txna ApplicationArgs 0
+method "withdraw_funds(uint64)void"
 ==
+bnz main_l15
+txna ApplicationArgs 0
+method "get_event_info()(uint64,uint64,uint64)"
+==
+bnz main_l14
+txna ApplicationArgs 0
+method "list_for_resale(uint64,uint64)void"
+==
+bnz main_l13
+txna ApplicationArgs 0
+method "delist_resale_ticket(uint64)void"
+==
+bnz main_l12
+txna ApplicationArgs 0
+method "buy_resale_ticket(uint64,pay)void"
+==
+bnz main_l11
+err
+main_l11:
+txn OnCompletion
+int NoOp
+==
+txn ApplicationID
+int 0
+!=
+&&
+assert
+callsub buyresaleticketcaster_17
+int 1
+return
+main_l12:
+txn OnCompletion
+int NoOp
+==
+txn ApplicationID
+int 0
+!=
+&&
+assert
+callsub delistresaleticketcaster_16
+int 1
+return
+main_l13:
+txn OnCompletion
+int NoOp
+==
+txn ApplicationID
+int 0
+!=
+&&
+assert
+callsub listforresalecaster_15
+int 1
+return
+main_l14:
+txn OnCompletion
+int NoOp
+==
+txn ApplicationID
+int 0
+!=
+&&
+assert
+callsub geteventinfocaster_14
+int 1
+return
+main_l15:
+txn OnCompletion
+int NoOp
+==
+txn ApplicationID
+int 0
+!=
+&&
+assert
+callsub withdrawfundscaster_13
+int 1
+return
+main_l16:
+txn OnCompletion
+int NoOp
+==
+txn ApplicationID
+int 0
+!=
+&&
+assert
+callsub checkincaster_12
+int 1
 return
 main_l17:
-txn Sender
-global CreatorAddress
+txn OnCompletion
+int NoOp
 ==
+txn ApplicationID
+int 0
+!=
+&&
+assert
+callsub claimticketcaster_11
+int 1
 return
 main_l18:
+txn OnCompletion
+int NoOp
+==
+txn ApplicationID
+int 0
+!=
+&&
+assert
+callsub buyticketcaster_10
 int 1
 return
 main_l19:
+txn OnCompletion
+int NoOp
+==
+txn ApplicationID
+int 0
+!=
+&&
+assert
+callsub createeventcaster_9
 int 1
 return
 main_l20:
+txn OnCompletion
+int NoOp
+==
+bnz main_l30
+txn OnCompletion
+int OptIn
+==
+bnz main_l29
+txn OnCompletion
+int CloseOut
+==
+bnz main_l28
+txn OnCompletion
+int UpdateApplication
+==
+bnz main_l27
+txn OnCompletion
+int DeleteApplication
+==
+bnz main_l26
+err
+main_l26:
+txn Sender
+global CreatorAddress
+==
+return
+main_l27:
+txn Sender
+global CreatorAddress
+==
+return
+main_l28:
+int 1
+return
+main_l29:
+int 1
+return
+main_l30:
 txn ApplicationID
 int 0
 ==
@@ -117,6 +197,10 @@ return
 // create_event
 createevent_0:
 proto 2 0
+txn Sender
+global CreatorAddress
+==
+assert
 byte "Price"
 frame_dig -2
 app_global_put
@@ -151,12 +235,6 @@ byte "Supply"
 app_global_get
 <
 assert
-byte "Sold"
-byte "Sold"
-app_global_get
-int 1
-+
-app_global_put
 itxn_begin
 int acfg
 itxn_field TypeEnum
@@ -171,53 +249,85 @@ itxn_field ConfigAssetName
 byte "TKT"
 itxn_field ConfigAssetUnitName
 global CurrentApplicationAddress
-itxn_field ConfigAssetManager
+itxn_field ConfigAssetClawback
 itxn_submit
+byte "tickets"
+byte "Sold"
+app_global_get
+itob
+concat
 itxn CreatedAssetID
 itob
 txn Sender
+concat
 byte "\x00"
 concat
+int 0
+itob
+concat
 box_put
+byte "AssetID:"
+itxn CreatedAssetID
+itob
+concat
+log
+byte "Sold"
+byte "Sold"
+app_global_get
+int 1
++
+app_global_put
 retsub
 
 // claim_ticket
 claimticket_2:
 proto 1 0
+byte "tickets"
 frame_dig -1
 itob
+concat
 box_get
 store 1
 store 0
 load 1
 assert
 load 0
-extract 0 32
+extract 0 8
+btoi
 store 2
 load 0
-extract 32 1
+extract 8 32
 store 3
+load 0
+extract 40 1
+store 4
 txn Sender
-load 2
+load 3
 ==
 assert
-load 3
+load 4
 byte "\x00"
 ==
 assert
 itxn_begin
 int axfer
 itxn_field TypeEnum
-frame_dig -1
+global CurrentApplicationAddress
+itxn_field Sender
+load 2
 itxn_field XferAsset
 txn Sender
 itxn_field AssetReceiver
 int 1
 itxn_field AssetAmount
+int 0
+itxn_field Fee
 itxn_submit
+byte "tickets"
 frame_dig -1
 itob
-int 32
+concat
+int 40
 byte "\x01"
 box_replace
 retsub
@@ -225,34 +335,248 @@ retsub
 // check_in
 checkin_3:
 proto 1 0
+byte "tickets"
 frame_dig -1
 itob
+concat
 box_get
+store 6
 store 5
-store 4
-load 5
+load 6
 assert
 txn Sender
 byte "Organizer"
 app_global_get
 ==
 assert
-load 4
-extract 32 1
-store 6
-load 6
+load 5
+extract 40 1
 byte "\x01"
 ==
 assert
+byte "tickets"
 frame_dig -1
 itob
-int 32
+concat
+int 40
 byte "\x02"
 box_replace
 retsub
 
+// withdraw_funds
+withdrawfunds_4:
+proto 1 0
+txn Sender
+byte "Organizer"
+app_global_get
+==
+assert
+itxn_begin
+int pay
+itxn_field TypeEnum
+txn Sender
+itxn_field Receiver
+frame_dig -1
+itxn_field Amount
+int 0
+itxn_field Fee
+itxn_submit
+retsub
+
+// get_event_info
+geteventinfo_5:
+proto 0 1
+byte ""
+int 0
+dupn 4
+byte ""
+dup
+byte "Price"
+app_global_get
+frame_bury 1
+byte "Supply"
+app_global_get
+frame_bury 2
+byte "Sold"
+app_global_get
+frame_bury 3
+frame_dig 1
+itob
+frame_dig 2
+itob
+concat
+frame_dig 3
+itob
+concat
+frame_bury 0
+retsub
+
+// list_for_resale
+listforresale_6:
+proto 2 0
+byte "tickets"
+frame_dig -2
+itob
+concat
+box_get
+store 8
+store 7
+load 8
+assert
+txn Sender
+load 7
+extract 8 32
+==
+assert
+load 7
+extract 40 1
+byte "\x01"
+==
+assert
+byte "tickets"
+frame_dig -2
+itob
+concat
+int 40
+byte "\x03"
+box_replace
+byte "tickets"
+frame_dig -2
+itob
+concat
+int 41
+frame_dig -1
+itob
+box_replace
+retsub
+
+// delist_resale_ticket
+delistresaleticket_7:
+proto 1 0
+byte "tickets"
+frame_dig -1
+itob
+concat
+box_get
+store 10
+store 9
+load 10
+assert
+txn Sender
+load 9
+extract 8 32
+==
+assert
+load 9
+extract 40 1
+byte "\x03"
+==
+assert
+byte "tickets"
+frame_dig -1
+itob
+concat
+int 40
+byte "\x01"
+box_replace
+byte "tickets"
+frame_dig -1
+itob
+concat
+int 41
+int 0
+itob
+box_replace
+retsub
+
+// buy_resale_ticket
+buyresaleticket_8:
+proto 2 0
+byte "tickets"
+frame_dig -2
+itob
+concat
+box_get
+store 15
+store 14
+load 15
+assert
+load 14
+extract 8 32
+store 11
+load 14
+extract 0 8
+btoi
+store 13
+load 14
+extract 41 8
+btoi
+store 12
+load 14
+extract 40 1
+byte "\x03"
+==
+assert
+frame_dig -1
+gtxns Receiver
+global CurrentApplicationAddress
+==
+assert
+frame_dig -1
+gtxns Amount
+load 12
+>=
+assert
+itxn_begin
+int axfer
+itxn_field TypeEnum
+load 13
+itxn_field XferAsset
+load 11
+itxn_field AssetSender
+txn Sender
+itxn_field AssetReceiver
+int 1
+itxn_field AssetAmount
+int 0
+itxn_field Fee
+itxn_submit
+itxn_begin
+int pay
+itxn_field TypeEnum
+load 11
+itxn_field Receiver
+load 12
+itxn_field Amount
+int 0
+itxn_field Fee
+itxn_submit
+byte "tickets"
+frame_dig -2
+itob
+concat
+int 8
+txn Sender
+box_replace
+byte "tickets"
+frame_dig -2
+itob
+concat
+int 40
+byte "\x01"
+box_replace
+byte "tickets"
+frame_dig -2
+itob
+concat
+int 41
+int 0
+itob
+box_replace
+retsub
+
 // create_event_caster
-createeventcaster_4:
+createeventcaster_9:
 proto 0 0
 int 0
 dup
@@ -268,7 +592,7 @@ callsub createevent_0
 retsub
 
 // buy_ticket_caster
-buyticketcaster_5:
+buyticketcaster_10:
 proto 0 0
 int 0
 txn GroupIndex
@@ -285,7 +609,7 @@ callsub buyticket_1
 retsub
 
 // claim_ticket_caster
-claimticketcaster_6:
+claimticketcaster_11:
 proto 0 0
 int 0
 txna ApplicationArgs 1
@@ -296,7 +620,7 @@ callsub claimticket_2
 retsub
 
 // check_in_caster
-checkincaster_7:
+checkincaster_12:
 proto 0 0
 int 0
 txna ApplicationArgs 1
@@ -304,4 +628,76 @@ btoi
 frame_bury 0
 frame_dig 0
 callsub checkin_3
+retsub
+
+// withdraw_funds_caster
+withdrawfundscaster_13:
+proto 0 0
+int 0
+txna ApplicationArgs 1
+btoi
+frame_bury 0
+frame_dig 0
+callsub withdrawfunds_4
+retsub
+
+// get_event_info_caster
+geteventinfocaster_14:
+proto 0 0
+byte ""
+callsub geteventinfo_5
+frame_bury 0
+byte 0x151f7c75
+frame_dig 0
+concat
+log
+retsub
+
+// list_for_resale_caster
+listforresalecaster_15:
+proto 0 0
+int 0
+dup
+txna ApplicationArgs 1
+btoi
+frame_bury 0
+txna ApplicationArgs 2
+btoi
+frame_bury 1
+frame_dig 0
+frame_dig 1
+callsub listforresale_6
+retsub
+
+// delist_resale_ticket_caster
+delistresaleticketcaster_16:
+proto 0 0
+int 0
+txna ApplicationArgs 1
+btoi
+frame_bury 0
+frame_dig 0
+callsub delistresaleticket_7
+retsub
+
+// buy_resale_ticket_caster
+buyresaleticketcaster_17:
+proto 0 0
+int 0
+dup
+txna ApplicationArgs 1
+btoi
+frame_bury 0
+txn GroupIndex
+int 1
+-
+frame_bury 1
+frame_dig 1
+gtxns TypeEnum
+int pay
+==
+assert
+frame_dig 0
+frame_dig 1
+callsub buyresaleticket_8
 retsub

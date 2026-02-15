@@ -31,8 +31,8 @@ export default function OrganizerDashboard() {
     const checkIn = async () => {
         if (!activeAccount || !appId || !ticketId) { setStatus("Fill all fields"); return; }
         const ticketIdInput = parseInt(ticketId, 10);
-        if (!Number.isInteger(ticketIdInput) || ticketIdInput < 1) {
-            setStatus("Enter a valid Ticket # (index) or Asset ID from the attendee's QR.");
+        if (!Number.isInteger(ticketIdInput) || ticketIdInput < 0) {
+            setStatus("Enter a valid Ticket # (index 0+) or Asset ID from the attendee's QR.");
             return;
         }
         setIsLoading(true); setStatus("");
@@ -63,30 +63,46 @@ export default function OrganizerDashboard() {
                 boxValue = boxAtInput;
             } else if (ticketIdInput > 1000) {
                 // Likely an asset ID: find which ticket index has this asset
-                const appInfo = await algodClient.getApplicationByID(appID).do();
-                const gs = appInfo.params['global-state'] || [];
-                const soldKey = btoa('Sold');
-                const soldState = gs.find((s: { key: string }) => s.key === soldKey);
-                const sold = soldState ? soldState.value.uint : 0;
-                let found = false;
-                for (let i = 1; i <= sold; i++) {
-                    const bv = await tryBox(i);
-                    if (bv && bv.length >= 8) {
-                        const assetIdInBox = Number(algosdk.decodeUint64(bv.slice(0, 8), 'safe'));
-                        if (assetIdInBox === ticketIdInput) {
-                            resolvedIndex = i;
-                            boxValue = bv;
-                            found = true;
-                            break;
+
+                // 1. Try Legacy Contract Key (Key = 8-byte AssetID)
+                try {
+                    const legacyKey = algosdk.encodeUint64(ticketIdInput);
+                    const legacyBox = await algodClient.getApplicationBoxByName(appID, legacyKey).do();
+                    const legacyVal = decodeBoxValue(legacyBox.value);
+                    if (legacyVal && legacyVal.length >= 8) {
+                        resolvedIndex = 0; // Legacy tickets don't have an index, default to 0
+                        boxValue = legacyVal;
+                        // For legacy contracts, we need to adapt checking logic or just proceed if box matches
+                    }
+                } catch (e) { /* Not legacy */ }
+
+                if (!boxValue) {
+                    // 2. Try New Contract (Search all indexed boxes)
+                    const appInfo = await algodClient.getApplicationByID(appID).do();
+                    const gs = appInfo.params['global-state'] || [];
+                    const soldKey = btoa('Sold');
+                    const soldState = gs.find((s: { key: string }) => s.key === soldKey);
+                    const sold = soldState ? soldState.value.uint : 0;
+
+                    for (let i = 0; i < sold; i++) {
+                        const bv = await tryBox(i);
+                        if (bv && bv.length >= 8) {
+                            const assetIdInBox = Number(algosdk.decodeUint64(bv.slice(0, 8), 'safe'));
+                            if (assetIdInBox === ticketIdInput) {
+                                resolvedIndex = i;
+                                boxValue = bv;
+                                break;
+                            }
                         }
                     }
                 }
-                if (!found) {
+
+                if (!boxValue) {
                     setStatus(`✗ No ticket with Asset ID ${ticketIdInput} for this event. Check Event App ID is correct.`);
                     return;
                 }
             } else {
-                setStatus(`✗ No ticket #${ticketIdInput} for this event. You can enter Ticket # (1, 2, 3...) or the Asset ID from the QR.`);
+                setStatus(`✗ No ticket #${ticketIdInput} for this event. You can enter Ticket # (0, 1, 2...) or the Asset ID from the QR.`);
                 return;
             }
 
@@ -201,8 +217,8 @@ export default function OrganizerDashboard() {
                         {activeTab === 'verify' && (
                             <div className="space-y-2">
                                 <label className="text-sm font-bold text-gray-800">Ticket # or Asset ID</label>
-                                <input className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#685AFF]/30 focus:border-[#685AFF] transition-all text-sm" value={ticketId} onChange={(e) => setTicketId(e.target.value)} placeholder="e.g. 1 or 755496986 (from QR)" type="number" min={1} />
-                                <p className="text-xs text-gray-500">From the attendee&apos;s QR: use <code>ticketIndex</code> (1, 2, 3…) or <code>assetId</code> — both work.</p>
+                                <input className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-[#685AFF]/30 focus:border-[#685AFF] transition-all text-sm" value={ticketId} onChange={(e) => setTicketId(e.target.value)} placeholder="e.g. 0, 1 or Asset ID" type="number" min={0} />
+                                <p className="text-xs text-gray-500">From the attendee&apos;s QR: use <code>ticketIndex</code> (0, 1, 2…) or <code>assetId</code> — both work.</p>
                             </div>
                         )}
 
