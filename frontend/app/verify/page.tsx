@@ -40,7 +40,27 @@ export default function OrganizerDashboard() {
             const appID = parseInt(appId);
             const ticketsPrefix = new TextEncoder().encode("tickets");
 
-            // Resolve input to (ticketIndex, boxValue): accept either ticket index (1,2,3...) or asset ID
+            // 1. Validate App & Fetch Global State
+            let soldCount = 0;
+            try {
+                const appInfo = await algodClient.getApplicationByID(appID).do();
+                const gs = appInfo.params['global-state'] || [];
+                const soldKey = btoa('Sold');
+                const soldState = gs.find((s: { key: string }) => s.key === soldKey);
+
+                if (!soldState) {
+                    setStatus("✗ Invalid Event App ID. (Global 'Sold' count not found). Are you using the Factory ID?");
+                    setIsLoading(false);
+                    return;
+                }
+                soldCount = soldState.value.uint;
+            } catch (e) {
+                setStatus("✗ Event App ID not found on network.");
+                setIsLoading(false);
+                return;
+            }
+
+            // Resolve input to (ticketIndex, boxValue)
             let resolvedIndex: number | null = null;
             let boxValue: Uint8Array | null = null;
 
@@ -57,57 +77,47 @@ export default function OrganizerDashboard() {
                 }
             };
 
-            const boxAtInput = await tryBox(ticketIdInput);
-            if (boxAtInput && boxAtInput.length >= 41) {
-                resolvedIndex = ticketIdInput;
-                boxValue = boxAtInput;
-            } else if (ticketIdInput > 1000) {
-                // Likely an asset ID: find which ticket index has this asset
+            // CASE A: Input is likely a Ticket Index
+            if (ticketIdInput < 1000) {
+                if (ticketIdInput >= soldCount) {
+                    setStatus(`✗ Ticket #${ticketIdInput} does not exist. (Total Sold: ${soldCount})`);
+                    setIsLoading(false);
+                    return;
+                }
 
-                // 1. Try Legacy Contract Key (Key = 8-byte AssetID)
-                try {
-                    const legacyKey = algosdk.encodeUint64(ticketIdInput);
-                    const legacyBox = await algodClient.getApplicationBoxByName(appID, legacyKey).do();
-                    const legacyVal = decodeBoxValue(legacyBox.value);
-                    if (legacyVal && legacyVal.length >= 8) {
-                        resolvedIndex = 0; // Legacy tickets don't have an index, default to 0
-                        boxValue = legacyVal;
-                        // For legacy contracts, we need to adapt checking logic or just proceed if box matches
-                    }
-                } catch (e) { /* Not legacy */ }
-
-                if (!boxValue) {
-                    // 2. Try New Contract (Search all indexed boxes)
-                    const appInfo = await algodClient.getApplicationByID(appID).do();
-                    const gs = appInfo.params['global-state'] || [];
-                    const soldKey = btoa('Sold');
-                    const soldState = gs.find((s: { key: string }) => s.key === soldKey);
-                    const sold = soldState ? soldState.value.uint : 0;
-
-                    for (let i = 0; i < sold; i++) {
-                        const bv = await tryBox(i);
-                        if (bv && bv.length >= 8) {
-                            const assetIdInBox = Number(algosdk.decodeUint64(bv.slice(0, 8), 'safe'));
-                            if (assetIdInBox === ticketIdInput) {
-                                resolvedIndex = i;
-                                boxValue = bv;
-                                break;
-                            }
+                const boxAtInput = await tryBox(ticketIdInput);
+                if (boxAtInput && boxAtInput.length >= 41) {
+                    resolvedIndex = ticketIdInput;
+                    boxValue = boxAtInput;
+                } else {
+                    setStatus(`✗ Ticket #${ticketIdInput} box missing (Data inconsistency).`);
+                    setIsLoading(false);
+                    return;
+                }
+            }
+            // CASE B: Input is likely an Asset ID (Scan all boxes)
+            else {
+                for (let i = 0; i < soldCount; i++) {
+                    const bv = await tryBox(i);
+                    if (bv && bv.length >= 8) {
+                        const assetIdInBox = Number(algosdk.decodeUint64(bv.slice(0, 8), 'safe'));
+                        if (assetIdInBox === ticketIdInput) {
+                            resolvedIndex = i;
+                            boxValue = bv;
+                            break;
                         }
                     }
                 }
-
                 if (!boxValue) {
-                    setStatus(`✗ No ticket with Asset ID ${ticketIdInput} for this event. Check Event App ID is correct.`);
+                    setStatus(`✗ No ticket found with Asset ID ${ticketIdInput}.`);
+                    setIsLoading(false);
                     return;
                 }
-            } else {
-                setStatus(`✗ No ticket #${ticketIdInput} for this event. You can enter Ticket # (0, 1, 2...) or the Asset ID from the QR.`);
-                return;
             }
 
             // Ensure we resolved an index and have box data
-            if (resolvedIndex === null || !boxValue) { setStatus("✗ No ticket data found for that input."); return; }
+            if (resolvedIndex === null || !boxValue) { setStatus("✗ No ticket data found."); return; }
+
             // Box layout: 8 assetId, 32 owner, 1 status (0=pending, 1=claimed, 2=used)
             const statusByte = boxValue.length > 40 ? boxValue[40] : 0;
             if (statusByte === 0) {
